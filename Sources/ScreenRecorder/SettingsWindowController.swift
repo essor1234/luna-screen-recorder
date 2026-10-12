@@ -5,10 +5,11 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
     
     private var copyPathSwitch: NSSwitch!
     private var autoDeleteSwitch: NSSwitch!
+    private var systemAudioSwitch: NSSwitch!
     
     public init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 530),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 650),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -29,6 +30,7 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
         
         copyPathSwitch?.state = RetentionManager.shared.isAutoCopyPathEnabled ? .on : .off
         autoDeleteSwitch?.state = RetentionManager.shared.isAutoDeleteEnabled ? .on : .off
+        systemAudioSwitch?.state = RetentionManager.shared.isSystemAudioEnabled ? .on : .off
         
         window?.center()
         window?.makeKeyAndOrderFront(nil)
@@ -86,7 +88,48 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
         root.addSubview(aiBox)
         currentY -= (aiBoxHeight + 18)
         
-        // --- 2. STORAGE & RETENTION SECTION ---
+        // --- 2. AUDIO RECORDING SECTION ---
+        let audioHeader = NSTextField(labelWithString: "AUDIO RECORDING")
+        audioHeader.frame = NSRect(x: leftMargin, y: currentY - 18, width: boxWidth, height: 16)
+        audioHeader.font = NSFont.systemFont(ofSize: 11, weight: .bold)
+        audioHeader.textColor = .secondaryLabelColor
+        root.addSubview(audioHeader)
+        currentY -= 26
+        
+        let audioBoxHeight: CGFloat = 88
+        let audioBox = NSBox(frame: NSRect(x: leftMargin, y: currentY - audioBoxHeight, width: boxWidth, height: audioBoxHeight))
+        audioBox.boxType = .custom
+        audioBox.cornerRadius = 10
+        audioBox.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.6)
+        audioBox.borderColor = NSColor.separatorColor.withAlphaComponent(0.35)
+        audioBox.borderWidth = 1.0
+        
+        let audioIcon = NSImageView(frame: NSRect(x: innerPadding, y: 48, width: 24, height: 24))
+        audioIcon.image = NSImage(systemSymbolName: "speaker.wave.2.circle.fill", accessibilityDescription: nil)
+        audioIcon.contentTintColor = .systemBlue
+        audioBox.addSubview(audioIcon)
+        
+        let audioTitle = NSTextField(labelWithString: "Record System Audio (Computer Sound)")
+        audioTitle.frame = NSRect(x: innerPadding + 34, y: 50, width: boxWidth - innerPadding * 2 - 80, height: 20)
+        audioTitle.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        audioBox.addSubview(audioTitle)
+        
+        systemAudioSwitch = NSSwitch(frame: NSRect(x: boxWidth - 54 - innerPadding, y: 48, width: 54, height: 24))
+        systemAudioSwitch.state = RetentionManager.shared.isSystemAudioEnabled ? .on : .off
+        systemAudioSwitch.target = self
+        systemAudioSwitch.action = #selector(systemAudioToggled)
+        audioBox.addSubview(systemAudioSwitch)
+        
+        let audioDesc = NSTextField(wrappingLabelWithString: "Captures internal computer sound from applications, videos, and calls. Enabled by default with option to turn off anytime.")
+        audioDesc.frame = NSRect(x: innerPadding + 34, y: 10, width: boxWidth - innerPadding * 2 - 34, height: 34)
+        audioDesc.font = NSFont.systemFont(ofSize: 11.5)
+        audioDesc.textColor = .secondaryLabelColor
+        audioBox.addSubview(audioDesc)
+        
+        root.addSubview(audioBox)
+        currentY -= (audioBoxHeight + 18)
+        
+        // --- 3. STORAGE & RETENTION SECTION ---
         let storageHeader = NSTextField(labelWithString: "STORAGE & RETENTION")
         storageHeader.frame = NSRect(x: leftMargin, y: currentY - 18, width: boxWidth, height: 16)
         storageHeader.font = NSFont.systemFont(ofSize: 11, weight: .bold)
@@ -153,7 +196,7 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
         root.addSubview(storageBox)
         currentY -= (storageBoxHeight + 18)
         
-        // --- 3. KEYBOARD SHORTCUTS SECTION ---
+        // --- 4. KEYBOARD SHORTCUTS SECTION ---
         let hotkeyHeader = NSTextField(labelWithString: "GLOBAL KEYBOARD SHORTCUTS")
         hotkeyHeader.frame = NSRect(x: leftMargin, y: currentY - 18, width: boxWidth, height: 16)
         hotkeyHeader.font = NSFont.systemFont(ofSize: 11, weight: .bold)
@@ -161,7 +204,7 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
         root.addSubview(hotkeyHeader)
         currentY -= 26
         
-        let hotkeyBoxHeight: CGFloat = 116
+        let hotkeyBoxHeight: CGFloat = 142
         let hotkeyBox = NSBox(frame: NSRect(x: leftMargin, y: currentY - hotkeyBoxHeight, width: boxWidth, height: hotkeyBoxHeight))
         hotkeyBox.boxType = .custom
         hotkeyBox.cornerRadius = 10
@@ -173,11 +216,12 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
             ("⌘⌥1", "Record Area Crop (or click screen for full display)"),
             ("⌘⌥2", "Choose Window or Display"),
             ("⌘⌥3", "Record Active Screen / Entire Display"),
-            ("⌘⌥S", "Stop Recording (or click floating HUD)")
+            ("⌘⌥S", "Stop Recording (or click floating HUD)"),
+            ("⌘⌥F", "Toggle Floating Recorder Bar")
         ]
         
         for (i, item) in shortcuts.enumerated() {
-            let rowY = CGFloat(86 - i * 26)
+            let rowY = CGFloat(112 - i * 26)
             let badge = NSTextField(labelWithString: " \(item.0) ")
             badge.frame = NSRect(x: innerPadding, y: rowY, width: 50, height: 20)
             badge.font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .bold)
@@ -202,6 +246,10 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
     
     @objc private func copyPathToggled() {
         RetentionManager.shared.isAutoCopyPathEnabled = (copyPathSwitch.state == .on)
+    }
+    
+    @objc private func systemAudioToggled() {
+        RetentionManager.shared.isSystemAudioEnabled = (systemAudioSwitch.state == .on)
     }
     
     @objc private func autoDeleteToggled() {

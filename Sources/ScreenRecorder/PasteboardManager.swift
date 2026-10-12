@@ -10,15 +10,9 @@ public final class PasteboardManager {
     public func copyFileToPasteboard(fileURL: URL) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        
-        let filenamesType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
-        let pathList = [fileURL.path] as NSArray
-        pasteboard.setPropertyList(pathList, forType: filenamesType)
-        pasteboard.writeObjects([fileURL as NSURL])
-        pasteboard.setString(fileURL.path, forType: .string)
-        
+        let success = pasteboard.writeObjects([fileURL as NSURL])
         print("[PasteboardManager] Successfully copied \(fileURL.lastPathComponent) to pasteboard")
-        return true
+        return success
     }
     
     @discardableResult
@@ -109,14 +103,8 @@ public final class PasteboardManager {
         guard !fileURLs.isEmpty else { return false }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        
-        let filenamesType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
-        let pathList = fileURLs.map { $0.path } as NSArray
-        pasteboard.setPropertyList(pathList, forType: filenamesType)
-        pasteboard.writeObjects(fileURLs.map { $0 as NSURL })
-        pasteboard.setString(fileURLs.map { $0.path }.joined(separator: "\n"), forType: .string)
-        
+        let success = pasteboard.writeObjects(fileURLs.map { $0 as NSURL })
         print("[PasteboardManager] Successfully copied \(fileURLs.count) files to pasteboard")
-        return true
+        return success
     }
 }

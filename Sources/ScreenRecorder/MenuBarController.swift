@@ -24,6 +24,11 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
     private var autoCopyPathToggleItem: NSMenuItem!
     private var windowSubmenu: NSMenu!
     private var micMenuItem: NSMenuItem!
+    private var systemAudioToggleItem: NSMenuItem!
+    private var floatingBarMenuItem: NSMenuItem!
+    private var recentRecordingsItem: NSMenuItem!
+    
+    public static let recordingTimerTickNotification = Notification.Name("luna_recording_timer_tick")
     
     public override init() {
         super.init()
@@ -38,6 +43,13 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         setupHotKeys()
         if #available(macOS 14.0, *) {
             VisualPickerManager.shared.setup()
+        }
+        
+        // Show floating recorder bar if enabled
+        if RetentionManager.shared.isFloatingBarVisible {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                RecordingHUDController.shared.showIdleBar()
+            }
         }
         
         // Initial prune of old recordings on startup
@@ -101,6 +113,9 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         }
         HotKeyManager.shared.onStop = { [weak self] in
             self?.stopRecording()
+        }
+        HotKeyManager.shared.onToggleFloatingBar = { [weak self] in
+            self?.toggleFloatingBar()
         }
         HotKeyManager.shared.registerHotKeys()
     }
@@ -186,10 +201,23 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         micMenuItem.image = NSImage(systemSymbolName: "mic", accessibilityDescription: nil)
         menu.addItem(micMenuItem)
         
+        systemAudioToggleItem = NSMenuItem(title: "Record System Audio", action: #selector(toggleSystemAudio), keyEquivalent: "")
+        systemAudioToggleItem.target = self
+        systemAudioToggleItem.image = NSImage(systemSymbolName: "speaker.wave.2", accessibilityDescription: nil)
+        systemAudioToggleItem.state = RetentionManager.shared.isSystemAudioEnabled ? .on : .off
+        menu.addItem(systemAudioToggleItem)
+        
+        floatingBarMenuItem = NSMenuItem(title: "Floating Recorder Bar", action: #selector(toggleFloatingBar), keyEquivalent: "f")
+        floatingBarMenuItem.keyEquivalentModifierMask = [.command, .option]
+        floatingBarMenuItem.target = self
+        floatingBarMenuItem.image = NSImage(systemSymbolName: "menubar.dock.rectangle", accessibilityDescription: nil)
+        floatingBarMenuItem.state = RetentionManager.shared.isFloatingBarVisible ? .on : .off
+        menu.addItem(floatingBarMenuItem)
+        
         menu.addItem(NSMenuItem.separator())
         
         // Persistent library & preference items
-        let recentRecordingsItem = NSMenuItem(title: "Recent Recordings...", action: #selector(showRecentRecordings), keyEquivalent: "r")
+        recentRecordingsItem = NSMenuItem(title: "Recent Recordings...", action: #selector(showRecentRecordings), keyEquivalent: "r")
         recentRecordingsItem.keyEquivalentModifierMask = [.command, .option]
         recentRecordingsItem.target = self
         recentRecordingsItem.image = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil)
@@ -263,6 +291,8 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         
         autoDeleteToggleItem.state = RetentionManager.shared.isAutoDeleteEnabled ? .on : .off
         autoCopyPathToggleItem.state = RetentionManager.shared.isAutoCopyPathEnabled ? .on : .off
+        systemAudioToggleItem.state = RetentionManager.shared.isSystemAudioEnabled ? .on : .off
+        floatingBarMenuItem.state = RetentionManager.shared.isFloatingBarVisible ? .on : .off
         
         let isMuted = MicrophoneManager.shared.isMuted
         let micName = MicrophoneManager.shared.currentDeviceName
@@ -275,6 +305,44 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
             self.micMenuItem.title = isMuted ? "Microphone: Muted" : "Microphone: \(micName)"
             self.micMenuItem.image = NSImage(systemSymbolName: isMuted ? "mic.slash.fill" : "mic.fill", accessibilityDescription: nil)
         }
+        
+        // Dynamic Recent Recordings Submenu
+        let recentsMenu = NSMenu(title: "Recent Recordings")
+        let openWindowItem = NSMenuItem(title: "Open Recordings Window (⌘⌥R)", action: #selector(showRecentRecordings), keyEquivalent: "r")
+        openWindowItem.keyEquivalentModifierMask = [.command, .option]
+        openWindowItem.target = self
+        openWindowItem.image = NSImage(systemSymbolName: "macwindow", accessibilityDescription: nil)
+        recentsMenu.addItem(openWindowItem)
+        
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: RetentionManager.shared.recordingsDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+            options: .skipsHiddenFiles
+        )) ?? []
+        let validRecs = files
+            .filter { $0.pathExtension.lowercased() == "mp4" && !$0.lastPathComponent.contains(".sb-") }
+            .sorted { (u1, u2) -> Bool in
+                let d1 = (try? u1.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date.distantPast
+                let d2 = (try? u2.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date.distantPast
+                return d1 > d2
+            }
+        
+        if !validRecs.isEmpty {
+            recentsMenu.addItem(NSMenuItem.separator())
+            let header = NSMenuItem(title: "Latest Recordings:", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            recentsMenu.addItem(header)
+            
+            for url in validRecs.prefix(5) {
+                let sizeStr = RetentionManager.formattedFileSize(for: url)
+                let item = NSMenuItem(title: "\(url.lastPathComponent) (\(sizeStr))", action: #selector(openSpecificRecording(_:)), keyEquivalent: "")
+                item.representedObject = url
+                item.target = self
+                item.image = NSImage(systemSymbolName: "play.circle", accessibilityDescription: nil)
+                recentsMenu.addItem(item)
+            }
+        }
+        recentRecordingsItem.submenu = recentsMenu
         
         if isRecording {
             let mins = recordingSeconds / 60
@@ -565,13 +633,19 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         let icon = isPaused ? "⏸" : "🔴"
         statusItem.button?.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .bold)
         statusItem.button?.title = String(format: "%@ %02d:%02d", icon, mins, secs)
+        
+        NotificationCenter.default.post(
+            name: MenuBarController.recordingTimerTickNotification,
+            object: nil,
+            userInfo: ["seconds": recordingSeconds, "isPaused": isPaused]
+        )
     }
     
     @objc public func stopRecording() {
         guard CaptureEngine.shared.isRecording else { return }
         
         stopTimer()
-        RecordingHUDController.shared.hide()
+        RecordingHUDController.shared.finishRecording()
         updateStatusItemIcon(isRecording: false)
         stopMenuItem.isEnabled = false
         pauseMenuItem.isEnabled = false
@@ -584,8 +658,8 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
                 if RetentionManager.shared.isAutoCopyPathEnabled {
                     PasteboardManager.shared.copyAIPromptToPasteboard(fileURL: outputURL)
                     ToastHUDController.shared.show(
-                        title: "Recording + Actions Copied",
-                        message: "Ready to paste (⌘V) into your LLM",
+                        title: "Clipboard Updated",
+                        message: "Recording info & path copied to clipboard (⌘V)",
                         fileURL: outputURL
                     )
                 } else {
@@ -602,6 +676,14 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
                 // Send system notification
                 let sizeStr = RetentionManager.formattedFileSize(for: outputURL)
                 showSuccessNotification(filename: outputURL.lastPathComponent, size: sizeStr)
+                
+                // Return floating bar to ready state so user can record multiple clips consecutively
+                RecordingHUDController.shared.finishRecording()
+                
+                // Only open library window automatically if user specifically configured it
+                if RetentionManager.shared.autoOpenLibraryOnStop {
+                    RecordingsWindowController.shared.show(with: outputURL)
+                }
             } catch {
                 showErrorNotification(message: "Failed to save recording: \(error.localizedDescription)")
             }
@@ -627,6 +709,11 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
                 if CaptureEngine.shared.isRecording {
                     self.activeStatusMenuItem.title = CaptureEngine.shared.isPaused ? "⏸ Recording Paused (\(String(format: "%02d:%02d", mins, secs)))" : "🔴 Recording in progress... (\(String(format: "%02d:%02d", mins, secs)))"
                 }
+                NotificationCenter.default.post(
+                    name: MenuBarController.recordingTimerTickNotification,
+                    object: nil,
+                    userInfo: ["seconds": self.recordingSeconds, "isPaused": CaptureEngine.shared.isPaused]
+                )
             }
         }
     }
@@ -639,6 +726,11 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
     
     @objc private func showRecentRecordings() {
         RecordingsWindowController.shared.show()
+    }
+    
+    @objc private func openSpecificRecording(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        RecordingsWindowController.shared.show(with: url)
     }
     
     @objc private func openRecordingsFolder() {
@@ -654,6 +746,21 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func toggleAutoCopyPath() {
         RetentionManager.shared.isAutoCopyPathEnabled.toggle()
         autoCopyPathToggleItem.state = RetentionManager.shared.isAutoCopyPathEnabled ? .on : .off
+    }
+    
+    @objc private func toggleSystemAudio() {
+        RetentionManager.shared.isSystemAudioEnabled.toggle()
+        systemAudioToggleItem.state = RetentionManager.shared.isSystemAudioEnabled ? .on : .off
+    }
+    
+    @objc public func toggleFloatingBar() {
+        RetentionManager.shared.isFloatingBarVisible.toggle()
+        floatingBarMenuItem?.state = RetentionManager.shared.isFloatingBarVisible ? .on : .off
+        if RetentionManager.shared.isFloatingBarVisible {
+            RecordingHUDController.shared.showIdleBar()
+        } else {
+            RecordingHUDController.shared.hide()
+        }
     }
     
     @objc private func showSettings() {
@@ -689,10 +796,10 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
     
     private func showSuccessNotification(filename: String, size: String) {
         let content = UNMutableNotificationContent()
-        content.title = "Luna 🌙: Recording URL Copied!"
+        content.title = "Luna 🌙: Clipboard Updated!"
         content.subtitle = "\(filename) (\(size))"
         if RetentionManager.shared.isAutoCopyPathEnabled {
-            content.body = "Recording URL is now in your clipboard and ready to be pasted (⌘V)."
+            content.body = "Clipboard has been updated with your recording info and file path (⌘V)."
         } else {
             content.body = "Recording saved to your library."
         }

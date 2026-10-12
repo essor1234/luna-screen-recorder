@@ -12,11 +12,19 @@ public enum CaptureTarget {
 public final class CaptureEngine: NSObject, SCStreamDelegate, SCStreamOutput {
     public static let shared = CaptureEngine()
     
+    public static let recordingStateDidChangeNotification = Notification.Name("LunaRecordingStateDidChangeNotification")
+    
     private var stream: SCStream?
     private var videoEncoder: VideoEncoder?
     private let captureQueue = DispatchQueue(label: "com.screenrecorder.capture", qos: .userInitiated)
     
-    private(set) public var isRecording = false
+    private(set) public var isRecording = false {
+        didSet {
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: CaptureEngine.recordingStateDidChangeNotification, object: nil)
+            }
+        }
+    }
     private(set) public var isPaused = false
     private var currentOutputURL: URL?
     
@@ -100,27 +108,46 @@ public final class CaptureEngine: NSObject, SCStreamDelegate, SCStreamOutput {
         config.width = outputWidth
         config.height = outputHeight
         
-        let enableAudio = !MicrophoneManager.shared.isMuted
-        let encoder = try VideoEncoder(outputURL: outputURL, width: outputWidth, height: outputHeight, frameRate: 30, enableAudio: enableAudio)
+        let enableSystemAudio = RetentionManager.shared.isSystemAudioEnabled
+        let enableMicAudio = !MicrophoneManager.shared.isMuted
+        
+        if enableSystemAudio {
+            config.capturesAudio = true
+            config.sampleRate = 48000
+            config.channelCount = 2
+            config.excludesCurrentProcessAudio = true
+        }
+        
+        let encoder = try VideoEncoder(
+            outputURL: outputURL,
+            width: outputWidth,
+            height: outputHeight,
+            frameRate: 30,
+            enableSystemAudio: enableSystemAudio,
+            enableMicrophoneAudio: enableMicAudio
+        )
         try encoder.start()
         
         self.videoEncoder = encoder
         self.currentOutputURL = outputURL
         self.isPaused = false
         
-        if enableAudio {
+        if enableMicAudio {
             try? MicrophoneManager.shared.startCapture { [weak encoder] sampleBuffer in
-                encoder?.appendAudio(sampleBuffer: sampleBuffer)
+                encoder?.appendMicrophoneAudio(sampleBuffer: sampleBuffer)
             }
         }
         
         let newStream = SCStream(filter: filter, configuration: config, delegate: self)
         try newStream.addStreamOutput(self, type: .screen, sampleHandlerQueue: captureQueue)
+        if enableSystemAudio {
+            try newStream.addStreamOutput(self, type: .audio, sampleHandlerQueue: captureQueue)
+        }
         
         try await newStream.startCapture()
         self.stream = newStream
         self.isRecording = true
-        print("[CaptureEngine] Started capturing \(outputWidth)x\(outputHeight) to \(outputURL.path)")
+        print("[CaptureEngine] Started capturing \(outputWidth)x\(outputHeight) (SysAudio: \(enableSystemAudio), Mic: \(enableMicAudio)) to \(outputURL.path)")
     }
     
     public func startCapture(filter: SCContentFilter, outputURL: URL) async throws {
@@ -156,27 +183,46 @@ public final class CaptureEngine: NSObject, SCStreamDelegate, SCStreamOutput {
             InteractionTracker.shared.startSession(outputURL: outputURL)
         }
         
-        let enableAudio = !MicrophoneManager.shared.isMuted
-        let encoder = try VideoEncoder(outputURL: outputURL, width: outputWidth, height: outputHeight, frameRate: 30, enableAudio: enableAudio)
+        let enableSystemAudio = RetentionManager.shared.isSystemAudioEnabled
+        let enableMicAudio = !MicrophoneManager.shared.isMuted
+        
+        if enableSystemAudio {
+            config.capturesAudio = true
+            config.sampleRate = 48000
+            config.channelCount = 2
+            config.excludesCurrentProcessAudio = true
+        }
+        
+        let encoder = try VideoEncoder(
+            outputURL: outputURL,
+            width: outputWidth,
+            height: outputHeight,
+            frameRate: 30,
+            enableSystemAudio: enableSystemAudio,
+            enableMicrophoneAudio: enableMicAudio
+        )
         try encoder.start()
         
         self.videoEncoder = encoder
         self.currentOutputURL = outputURL
         self.isPaused = false
         
-        if enableAudio {
+        if enableMicAudio {
             try? MicrophoneManager.shared.startCapture { [weak encoder] sampleBuffer in
-                encoder?.appendAudio(sampleBuffer: sampleBuffer)
+                encoder?.appendMicrophoneAudio(sampleBuffer: sampleBuffer)
             }
         }
         
         let newStream = SCStream(filter: filter, configuration: config, delegate: self)
         try newStream.addStreamOutput(self, type: .screen, sampleHandlerQueue: captureQueue)
+        if enableSystemAudio {
+            try newStream.addStreamOutput(self, type: .audio, sampleHandlerQueue: captureQueue)
+        }
         
         try await newStream.startCapture()
         self.stream = newStream
         self.isRecording = true
-        print("[CaptureEngine] Started capturing visual filter (\(outputWidth)x\(outputHeight)) to \(outputURL.path)")
+        print("[CaptureEngine] Started capturing visual filter (\(outputWidth)x\(outputHeight)) (SysAudio: \(enableSystemAudio), Mic: \(enableMicAudio)) to \(outputURL.path)")
     }
     
     public func pauseCapture() {
@@ -249,11 +295,6 @@ public final class CaptureEngine: NSObject, SCStreamDelegate, SCStreamOutput {
                 )
                 try? enrichedPrompt.data(using: .utf8)?.write(to: promptURL)
                 print("[CaptureEngine] Enriched prompt updated with \(keyframes.count) keyframes")
-                if RetentionManager.shared.isAutoCopyPathEnabled {
-                    await MainActor.run {
-                        PasteboardManager.shared.copyAIPromptToPasteboard(fileURL: finalURL)
-                    }
-                }
             }
         }
         
@@ -262,8 +303,16 @@ public final class CaptureEngine: NSObject, SCStreamDelegate, SCStreamOutput {
     
     // MARK: - SCStreamOutput
     public func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen else { return }
-        videoEncoder?.append(sampleBuffer: sampleBuffer)
+        switch type {
+        case .screen:
+            videoEncoder?.append(sampleBuffer: sampleBuffer)
+        case .audio:
+            videoEncoder?.appendSystemAudio(sampleBuffer: sampleBuffer)
+        case .microphone:
+            break
+        @unknown default:
+            break
+        }
     }
     
     // MARK: - SCStreamDelegate

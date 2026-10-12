@@ -156,13 +156,26 @@ public final class RecordingsWindowController: NSWindowController, NSTableViewDa
     
     private var tableView: SidebarTableView!
     private var countLabel: NSTextField!
+    private var recordButton: NSButton!
     private var retentionFooterButton: NSButton!
     private var storageStatusIcon: NSImageView!
     
+    private var headerView: NSView!
     private var titleLabel: NSTextField!
     private var subtitleLabel: NSTextField!
     private var playerView: AVPlayerView!
     private var playerTimeObserver: Any?
+    
+    // Live Recording Status Banner & Card
+    private var activeRecordingBanner: NSView!
+    private var liveTimerLabel: NSTextField!
+    private var liveStatusBadge: NSTextField!
+    private var liveAudioDetailsLabel: NSTextField!
+    private var livePauseButton: NSButton!
+    private var liveStopButton: NSButton!
+    private var liveRecordingCard: NSView!
+    private var currentRecordingSeconds: Int = 0
+    private var currentRecordingIsPaused: Bool = false
     
     // Voice Transcript Card
     private var transcriptCard: NSView!
@@ -214,6 +227,10 @@ public final class RecordingsWindowController: NSWindowController, NSTableViewDa
         updateRetentionUI()
         
         NotificationCenter.default.addObserver(self, selector: #selector(autoDeletePreferenceChanged), name: RetentionManager.autoDeleteDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(recordingStateChanged), name: CaptureEngine.recordingStateDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(recordingStateChanged), name: RetentionManager.systemAudioDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(recordingStateChanged), name: MicrophoneManager.selectionDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(recordingTimerTick(_:)), name: MenuBarController.recordingTimerTickNotification, object: nil)
     }
     
     required init?(coder: NSCoder) {
@@ -222,6 +239,7 @@ public final class RecordingsWindowController: NSWindowController, NSTableViewDa
     
     public func show(with latestRecordingURL: URL? = nil) {
         updateRetentionUI()
+        updateRecordButtonState(seconds: currentRecordingSeconds, isPaused: currentRecordingIsPaused)
         refreshRecordingsList()
         
         if let latest = latestRecordingURL, let index = recordings.firstIndex(of: latest) {
@@ -240,8 +258,11 @@ public final class RecordingsWindowController: NSWindowController, NSTableViewDa
         }
         
         updateSelectionState()
+        updateRecordingBanner(seconds: currentRecordingSeconds, isPaused: currentRecordingIsPaused)
         
-        window?.center()
+        if window?.isVisible == false {
+            window?.center()
+        }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -339,16 +360,30 @@ public final class RecordingsWindowController: NSWindowController, NSTableViewDa
         headerBox.autoresizingMask = [.width, .minYMargin]
         
         let titleLbl = NSTextField(labelWithString: "Recordings")
-        titleLbl.frame = NSRect(x: 0, y: 12, width: 140, height: 24)
+        titleLbl.frame = NSRect(x: 0, y: 14, width: 130, height: 22)
         titleLbl.font = NSFont.systemFont(ofSize: 18, weight: .bold)
         headerBox.addSubview(titleLbl)
         
         let countLbl = NSTextField(labelWithString: "0 recordings")
-        countLbl.frame = NSRect(x: 0, y: 0, width: 180, height: 14)
+        countLbl.frame = NSRect(x: 0, y: 0, width: 130, height: 14)
         countLbl.font = NSFont.systemFont(ofSize: 11, weight: .medium)
         countLbl.textColor = .secondaryLabelColor
         headerBox.addSubview(countLbl)
         self.countLabel = countLbl
+        
+        let recordBtn = NSButton(frame: NSRect(x: headerBox.frame.width - 100, y: 4, width: 100, height: 28))
+        recordBtn.autoresizingMask = [.minXMargin]
+        recordBtn.bezelStyle = .rounded
+        recordBtn.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let redConfig = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
+        recordBtn.image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: "Record")?.withSymbolConfiguration(redConfig)
+        recordBtn.imagePosition = .imageLeading
+        recordBtn.title = "Record ▾"
+        recordBtn.toolTip = "Start a new screen recording or choose recording options"
+        recordBtn.target = self
+        recordBtn.action = #selector(recordButtonClicked(_:))
+        headerBox.addSubview(recordBtn)
+        self.recordButton = recordBtn
         
         sidebar.addSubview(headerBox)
         
@@ -467,6 +502,7 @@ public final class RecordingsWindowController: NSWindowController, NSTableViewDa
         let headerView = NSView(frame: NSRect(x: 28, y: detail.frame.height - 76, width: detail.frame.width - 56, height: 50))
         headerView.autoresizingMask = [.width, .minYMargin]
         headerView.wantsLayer = true
+        self.headerView = headerView
         
         let mainTitle = NSTextField(labelWithString: "Select a Recording")
         mainTitle.frame = NSRect(x: 0, y: 22, width: headerView.frame.width, height: 24)
@@ -594,9 +630,140 @@ public final class RecordingsWindowController: NSWindowController, NSTableViewDa
         // Multi-Selection Overlay Container (Occupies Player & Transcript Space when multiple items selected)
         setupMultiSelectContainer(detailView: detail)
         
+        // Active Recording Banner & Live Card
+        setupActiveRecordingBanner(detailView: detail)
+        setupLiveRecordingCard(detailView: detail)
+        
         // Floating Translucent Toast HUD
         toastHUD = WindowToastHUDView()
         detail.addSubview(toastHUD)
+    }
+    
+    private func setupActiveRecordingBanner(detailView: NSView) {
+        let banner = NSView(frame: NSRect(x: 28, y: detailView.frame.height - 80, width: detailView.frame.width - 56, height: 58))
+        banner.autoresizingMask = [.width, .minYMargin]
+        banner.wantsLayer = true
+        banner.layer?.cornerRadius = 10
+        banner.layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.08).cgColor
+        banner.layer?.borderWidth = 1.0
+        banner.layer?.borderColor = NSColor.systemRed.withAlphaComponent(0.35).cgColor
+        
+        let dot = NSImageView(frame: NSRect(x: 14, y: 22, width: 14, height: 14))
+        let redConfig = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
+        dot.image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: nil)?.withSymbolConfiguration(redConfig)
+        banner.addSubview(dot)
+        
+        let badge = NSTextField(labelWithString: "REC")
+        badge.frame = NSRect(x: 34, y: 29, width: 60, height: 16)
+        badge.font = NSFont.systemFont(ofSize: 10.5, weight: .bold)
+        badge.textColor = .systemRed
+        banner.addSubview(badge)
+        self.liveStatusBadge = badge
+        
+        let timer = NSTextField(labelWithString: "00:00")
+        timer.frame = NSRect(x: 34, y: 8, width: 85, height: 22)
+        timer.font = NSFont.monospacedDigitSystemFont(ofSize: 18, weight: .bold)
+        timer.textColor = .labelColor
+        banner.addSubview(timer)
+        self.liveTimerLabel = timer
+        
+        let audioLbl = NSTextField(labelWithString: "🔊 System Sound: ON  •  🎙️ Mic: Active")
+        audioLbl.frame = NSRect(x: 125, y: 18, width: max(detailView.frame.width - 340, 200), height: 20)
+        audioLbl.font = NSFont.systemFont(ofSize: 11.5, weight: .medium)
+        audioLbl.textColor = .secondaryLabelColor
+        audioLbl.autoresizingMask = [.width]
+        banner.addSubview(audioLbl)
+        self.liveAudioDetailsLabel = audioLbl
+        
+        let pauseBtn = NSButton(frame: NSRect(x: banner.frame.width - 200, y: 13, width: 88, height: 32))
+        pauseBtn.title = "Pause"
+        pauseBtn.image = NSImage(systemSymbolName: "pause.fill", accessibilityDescription: "Pause")
+        pauseBtn.imagePosition = .imageLeading
+        pauseBtn.bezelStyle = .rounded
+        pauseBtn.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        pauseBtn.autoresizingMask = [.minXMargin]
+        pauseBtn.target = self
+        pauseBtn.action = #selector(livePauseClicked)
+        banner.addSubview(pauseBtn)
+        self.livePauseButton = pauseBtn
+        
+        let stopBtn = NSButton(frame: NSRect(x: banner.frame.width - 104, y: 13, width: 96, height: 32))
+        stopBtn.title = "Stop ⏹"
+        stopBtn.bezelStyle = .rounded
+        stopBtn.bezelColor = .systemRed
+        stopBtn.contentTintColor = .white
+        stopBtn.font = NSFont.systemFont(ofSize: 12, weight: .bold)
+        stopBtn.autoresizingMask = [.minXMargin]
+        stopBtn.target = self
+        stopBtn.action = #selector(liveStopClicked)
+        banner.addSubview(stopBtn)
+        self.liveStopButton = stopBtn
+        
+        banner.isHidden = true
+        self.activeRecordingBanner = banner
+        detailView.addSubview(banner)
+    }
+    
+    private func setupLiveRecordingCard(detailView: NSView) {
+        let card = NSView(frame: NSRect(x: 28, y: 84, width: detailView.frame.width - 56, height: detailView.frame.height - 180))
+        card.autoresizingMask = [.width, .height]
+        card.wantsLayer = true
+        card.layer?.cornerRadius = 12
+        card.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.5).cgColor
+        card.layer?.borderWidth = 1
+        card.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.3).cgColor
+        
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 14
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(stack)
+        
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: card.centerYAnchor, constant: -10),
+            stack.widthAnchor.constraint(lessThanOrEqualTo: card.widthAnchor, constant: -60)
+        ])
+        
+        let icon = NSImageView()
+        let redConfig = NSImage.SymbolConfiguration(pointSize: 44, weight: .regular).applying(NSImage.SymbolConfiguration(paletteColors: [.systemRed]))
+        icon.image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: "Recording")?.withSymbolConfiguration(redConfig)
+        stack.addArrangedSubview(icon)
+        
+        let titleLbl = NSTextField(labelWithString: "Screen Recording in Progress")
+        titleLbl.font = NSFont.systemFont(ofSize: 20, weight: .bold)
+        titleLbl.alignment = .center
+        stack.addArrangedSubview(titleLbl)
+        
+        let descLbl = NSTextField(labelWithString: "Luna is capturing your screen, system audio, and microphone.\nYour video will automatically appear and play right here as soon as you stop.")
+        descLbl.font = NSFont.systemFont(ofSize: 13, weight: .regular)
+        descLbl.textColor = .secondaryLabelColor
+        descLbl.alignment = .center
+        stack.addArrangedSubview(descLbl)
+        
+        let btnStack = NSStackView()
+        btnStack.orientation = .horizontal
+        btnStack.spacing = 12
+        btnStack.alignment = .centerY
+        
+        let cardPauseBtn = NSButton(title: "Pause / Resume (⌘⌥P)", target: self, action: #selector(livePauseClicked))
+        cardPauseBtn.bezelStyle = .rounded
+        cardPauseBtn.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        btnStack.addArrangedSubview(cardPauseBtn)
+        
+        let cardStopBtn = NSButton(title: "Stop & Save Recording (⌘⌥S)", target: self, action: #selector(liveStopClicked))
+        cardStopBtn.bezelStyle = .rounded
+        cardStopBtn.bezelColor = .systemRed
+        cardStopBtn.contentTintColor = .white
+        cardStopBtn.font = NSFont.systemFont(ofSize: 13, weight: .bold)
+        btnStack.addArrangedSubview(cardStopBtn)
+        
+        stack.addArrangedSubview(btnStack)
+        
+        card.isHidden = true
+        self.liveRecordingCard = card
+        detailView.addSubview(card)
     }
     
     private func setupTranscriptCard(detailView: NSView) {
@@ -870,7 +1037,8 @@ public final class RecordingsWindowController: NSWindowController, NSTableViewDa
             self.subtitleLabel.stringValue = "\(url.lastPathComponent)  •  ⏱ \(curStr) / \(totalStr)  •  \(sizeStr)"
         }
         
-        player.play()
+        // Video stays loaded and paused at 00:00 ready for manual playback. Never auto-play in the background!
+        player.pause()
         
         // Load or ensure voice transcript
         loadVoiceTranscript(for: url)
@@ -1400,6 +1568,185 @@ public final class RecordingsWindowController: NSWindowController, NSTableViewDa
         copyAction.backgroundColor = .controlAccentColor
         
         return [deleteAction, copyAction]
+    }
+    
+    // MARK: - Record Action & Options Menu
+    @objc private func recordingStateChanged() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if !CaptureEngine.shared.isRecording {
+                self.currentRecordingSeconds = 0
+                self.currentRecordingIsPaused = false
+            }
+            self.updateRecordButtonState(seconds: self.currentRecordingSeconds, isPaused: self.currentRecordingIsPaused)
+            self.updateRecordingBanner(seconds: self.currentRecordingSeconds, isPaused: self.currentRecordingIsPaused)
+        }
+    }
+    
+    @objc private func recordingTimerTick(_ notification: Notification) {
+        guard let info = notification.userInfo as? [String: Any],
+              let seconds = info["seconds"] as? Int,
+              let isPaused = info["isPaused"] as? Bool else { return }
+        self.currentRecordingSeconds = seconds
+        self.currentRecordingIsPaused = isPaused
+        DispatchQueue.main.async { [weak self] in
+            self?.updateRecordButtonState(seconds: seconds, isPaused: isPaused)
+            self?.updateRecordingBanner(seconds: seconds, isPaused: isPaused)
+        }
+    }
+    
+    private func updateRecordButtonState(seconds: Int = 0, isPaused: Bool = false) {
+        guard let btn = recordButton else { return }
+        if CaptureEngine.shared.isRecording {
+            let redConfig = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
+            btn.image = NSImage(systemSymbolName: isPaused ? "pause.circle.fill" : "stop.circle.fill", accessibilityDescription: "Stop")?.withSymbolConfiguration(redConfig)
+            let mins = seconds / 60
+            let secs = seconds % 60
+            if seconds > 0 {
+                btn.title = String(format: "%@ %02d:%02d", isPaused ? "Paused" : "Stop", mins, secs)
+            } else {
+                btn.title = "Stop ⏹"
+            }
+            btn.toolTip = "Recording in progress. Click to stop recording."
+        } else {
+            let redConfig = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
+            btn.image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: "Record")?.withSymbolConfiguration(redConfig)
+            btn.title = "Record ▾"
+            btn.toolTip = "Start a new screen recording or choose recording options"
+        }
+    }
+    
+    private func updateRecordingBanner(seconds: Int = 0, isPaused: Bool = false) {
+        let isRecording = CaptureEngine.shared.isRecording
+        
+        activeRecordingBanner?.isHidden = !isRecording
+        liveRecordingCard?.isHidden = !isRecording
+        headerView?.isHidden = isRecording
+        
+        if isRecording {
+            playerView.player?.pause()
+            playerView.isHidden = true
+            transcriptCard.isHidden = true
+            multiSelectContainer.isHidden = true
+            
+            let mins = seconds / 60
+            let secs = seconds % 60
+            let timeStr = String(format: "%02d:%02d", mins, secs)
+            liveTimerLabel?.stringValue = timeStr
+            liveStatusBadge?.stringValue = isPaused ? "PAUSED" : "REC"
+            liveStatusBadge?.textColor = isPaused ? .systemOrange : .systemRed
+            
+            let isSysAudio = RetentionManager.shared.isSystemAudioEnabled
+            let isMicMuted = MicrophoneManager.shared.isMuted
+            let micName = MicrophoneManager.shared.currentDeviceName
+            let audioStr = "🔊 System Sound: \(isSysAudio ? "ON" : "OFF")  •  🎙️ Mic: \(isMicMuted ? "Muted" : micName)"
+            liveAudioDetailsLabel?.stringValue = audioStr
+            
+            livePauseButton?.title = isPaused ? "Resume" : "Pause"
+            livePauseButton?.image = NSImage(systemSymbolName: isPaused ? "play.fill" : "pause.fill", accessibilityDescription: nil)
+            
+            countLabel?.stringValue = "🔴 Live (\(timeStr))"
+            tipLabel?.stringValue = "🔴 Recording in progress... Press Stop or ⌘⌥S to save to library."
+        } else {
+            countLabel?.stringValue = "\(recordings.count) recording\(recordings.count == 1 ? "" : "s")"
+            updateSelectionState()
+        }
+    }
+    
+    @objc private func livePauseClicked() {
+        MenuBarController.shared.togglePause()
+    }
+    
+    @objc private func liveStopClicked() {
+        MenuBarController.shared.stopRecording()
+    }
+    
+    @objc private func recordButtonClicked(_ sender: NSButton) {
+        if CaptureEngine.shared.isRecording {
+            MenuBarController.shared.stopRecording()
+            return
+        }
+        let menu = buildRecordOptionsMenu()
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: 0), in: sender)
+    }
+    
+    private func buildRecordOptionsMenu() -> NSMenu {
+        let menu = NSMenu(title: "Record Options")
+        
+        // --- 1. CAPTURE MODES ---
+        let areaItem = NSMenuItem(title: "Record Area... (⌘⌥1)", action: #selector(startAreaRecordingFromWindow), keyEquivalent: "")
+        areaItem.target = self
+        areaItem.image = NSImage(systemSymbolName: "crop", accessibilityDescription: nil)
+        menu.addItem(areaItem)
+        
+        let visualPickerItem = NSMenuItem(title: "Choose Window / Screen... (⌘⌥2)", action: #selector(startVisualPickerFromWindow), keyEquivalent: "")
+        visualPickerItem.target = self
+        visualPickerItem.image = NSImage(systemSymbolName: "macwindow.on.rectangle", accessibilityDescription: nil)
+        menu.addItem(visualPickerItem)
+        
+        let fullScreenItem = NSMenuItem(title: "Record Entire Screen (⌘⌥3)", action: #selector(startFullScreenRecordingFromWindow), keyEquivalent: "")
+        fullScreenItem.target = self
+        fullScreenItem.image = NSImage(systemSymbolName: "display", accessibilityDescription: nil)
+        menu.addItem(fullScreenItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        // --- 2. AUDIO OPTIONS ---
+        let isSystemAudioOn = RetentionManager.shared.isSystemAudioEnabled
+        let sysAudioItem = NSMenuItem(title: "Record System Audio", action: #selector(toggleSystemAudioFromWindow), keyEquivalent: "")
+        sysAudioItem.target = self
+        sysAudioItem.image = NSImage(systemSymbolName: "speaker.wave.2", accessibilityDescription: nil)
+        sysAudioItem.state = isSystemAudioOn ? .on : .off
+        menu.addItem(sysAudioItem)
+        
+        let isMuted = MicrophoneManager.shared.isMuted
+        let micName = MicrophoneManager.shared.currentDeviceName
+        let micItem = NSMenuItem(title: isMuted ? "Microphone: Muted" : "Microphone: \(micName)", action: nil, keyEquivalent: "")
+        micItem.image = NSImage(systemSymbolName: isMuted ? "mic.slash.fill" : "mic.fill", accessibilityDescription: nil)
+        micItem.submenu = MicrophoneManager.shared.buildMenu { [weak self] in
+            self?.updateRecordButtonState()
+        }
+        menu.addItem(micItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        // --- 3. SETTINGS ---
+        let settingsItem = NSMenuItem(title: "Recording Settings...", action: #selector(openSettingsFromWindow), keyEquivalent: ",")
+        settingsItem.keyEquivalentModifierMask = [.command]
+        settingsItem.target = self
+        settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+        menu.addItem(settingsItem)
+        
+        return menu
+    }
+    
+    @objc private func startAreaRecordingFromWindow() {
+        window?.orderOut(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            MenuBarController.shared.startAreaRecording()
+        }
+    }
+    
+    @objc private func startVisualPickerFromWindow() {
+        window?.orderOut(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            MenuBarController.shared.showVisualPicker()
+        }
+    }
+    
+    @objc private func startFullScreenRecordingFromWindow() {
+        window?.orderOut(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            MenuBarController.shared.startMainScreenRecording()
+        }
+    }
+    
+    @objc private func toggleSystemAudioFromWindow() {
+        RetentionManager.shared.isSystemAudioEnabled.toggle()
+    }
+    
+    @objc private func openSettingsFromWindow() {
+        SettingsWindowController.shared.show()
     }
 }
 

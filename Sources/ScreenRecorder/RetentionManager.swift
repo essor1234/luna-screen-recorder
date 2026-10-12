@@ -7,6 +7,43 @@ public final class RetentionManager {
     
     public static let autoDeleteDidChangeNotification = Notification.Name("LunaAutoDeleteDidChangeNotification")
     public static let autoCopyPathDidChangeNotification = Notification.Name("LunaAutoCopyPathDidChangeNotification")
+    public static let systemAudioDidChangeNotification = Notification.Name("LunaSystemAudioDidChangeNotification")
+    public static let floatingBarVisibilityDidChangeNotification = Notification.Name("LunaFloatingBarVisibilityDidChangeNotification")
+    
+    public var isFloatingBarVisible: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: "luna_floating_bar_visible") == nil {
+                return true // default enabled: floating recorder bar
+            }
+            return UserDefaults.standard.bool(forKey: "luna_floating_bar_visible")
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "luna_floating_bar_visible")
+            NotificationCenter.default.post(name: RetentionManager.floatingBarVisibilityDidChangeNotification, object: nil)
+        }
+    }
+    
+    public var autoOpenLibraryOnStop: Bool {
+        get {
+            return UserDefaults.standard.bool(forKey: "luna_auto_open_library_on_stop") // default false so screen stays clear
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "luna_auto_open_library_on_stop")
+        }
+    }
+    
+    public var isSystemAudioEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: "luna_system_audio_enabled") == nil {
+                return true // default enabled for system audio
+            }
+            return UserDefaults.standard.bool(forKey: "luna_system_audio_enabled")
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "luna_system_audio_enabled")
+            NotificationCenter.default.post(name: RetentionManager.systemAudioDidChangeNotification, object: nil)
+        }
+    }
     
     public var hasCompletedOnboarding: Bool {
         get {

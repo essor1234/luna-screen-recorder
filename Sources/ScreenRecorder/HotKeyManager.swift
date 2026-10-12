@@ -9,6 +9,7 @@ public final class HotKeyManager {
     public var onRecordWindow: (() -> Void)?
     public var onRecordScreen: (() -> Void)?
     public var onStop: (() -> Void)?
+    public var onToggleFloatingBar: (() -> Void)?
     
     private var eventHandler: EventHandlerRef?
     
@@ -17,6 +18,7 @@ public final class HotKeyManager {
         case recordWindow = 2
         case recordScreen = 3
         case stopRecording = 4
+        case toggleFloatingBar = 5
     }
     
     private init() {}
@@ -73,7 +75,10 @@ public final class HotKeyManager {
         // ⌘⌥S: Stop Recording (Key code 1 = 'S')
         registerKey(keyCode: 1, modifiers: modifiers, action: .stopRecording)
         
-        print("[HotKeyManager] Global hotkeys registered: ⌘⌥1 (Area), ⌘⌥2 (Window), ⌘⌥3 (Screen), ⌘⌥S (Stop)")
+        // ⌘⌥F: Toggle Floating Recorder Bar (Key code 3 = 'F')
+        registerKey(keyCode: 3, modifiers: modifiers, action: .toggleFloatingBar)
+        
+        print("[HotKeyManager] Global hotkeys registered: ⌘⌥1 (Area), ⌘⌥2 (Window), ⌘⌥3 (Screen), ⌘⌥S (Stop), ⌘⌥F (Bar)")
     }
     
     private func registerKey(keyCode: UInt32, modifiers: UInt32, action: HotKeyAction) {
@@ -106,6 +111,8 @@ public final class HotKeyManager {
             onRecordScreen?()
         case .stopRecording:
             onStop?()
+        case .toggleFloatingBar:
+            onToggleFloatingBar?()
         }
     }
 }

@@ -6,7 +6,8 @@ public final class VideoEncoder {
     private let outputURL: URL
     private let assetWriter: AVAssetWriter
     private let writerInput: AVAssetWriterInput
-    private var audioInput: AVAssetWriterInput?
+    private var systemAudioInput: AVAssetWriterInput?
+    private var micAudioInput: AVAssetWriterInput?
     private let encodingQueue = DispatchQueue(label: "com.screenrecorder.encoder")
     
     private var isSessionStarted = false
@@ -16,7 +17,14 @@ public final class VideoEncoder {
     private var pauseStartTime: CMTime?
     private var totalPausedDuration: CMTime = .zero
     
-    public init(outputURL: URL, width: Int, height: Int, frameRate: Int = 30, enableAudio: Bool = true) throws {
+    public init(
+        outputURL: URL,
+        width: Int,
+        height: Int,
+        frameRate: Int = 30,
+        enableSystemAudio: Bool = false,
+        enableMicrophoneAudio: Bool = false
+    ) throws {
         self.outputURL = outputURL
         
         // Ensure even dimensions for H.264
@@ -54,23 +62,52 @@ public final class VideoEncoder {
         }
         assetWriter.add(writerInput)
         
-        if enableAudio {
-            let audioSettings: [String: Any] = [
+        if enableSystemAudio {
+            let sysAudioSettings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 48000,
+                AVNumberOfChannelsKey: 2,
+                AVEncoderBitRateKey: 128000
+            ]
+            let sInput = AVAssetWriterInput(mediaType: .audio, outputSettings: sysAudioSettings)
+            sInput.expectsMediaDataInRealTime = true
+            if assetWriter.canAdd(sInput) {
+                assetWriter.add(sInput)
+                self.systemAudioInput = sInput
+                print("[VideoEncoder] Configured System Audio AAC input track (48kHz stereo)")
+            } else {
+                print("[VideoEncoder] Warning: Cannot add system audio input to asset writer")
+            }
+        }
+        
+        if enableMicrophoneAudio {
+            let micAudioSettings: [String: Any] = [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: 44100,
                 AVNumberOfChannelsKey: 1,
                 AVEncoderBitRateKey: 128000
             ]
-            let aInput = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
-            aInput.expectsMediaDataInRealTime = true
-            if assetWriter.canAdd(aInput) {
-                assetWriter.add(aInput)
-                self.audioInput = aInput
-                print("[VideoEncoder] Configured AAC audio input track")
+            let mInput = AVAssetWriterInput(mediaType: .audio, outputSettings: micAudioSettings)
+            mInput.expectsMediaDataInRealTime = true
+            if assetWriter.canAdd(mInput) {
+                assetWriter.add(mInput)
+                self.micAudioInput = mInput
+                print("[VideoEncoder] Configured Microphone AAC input track (44.1kHz mono)")
             } else {
-                print("[VideoEncoder] Warning: Cannot add audio input to asset writer")
+                print("[VideoEncoder] Warning: Cannot add microphone audio input to asset writer")
             }
         }
+    }
+    
+    public convenience init(outputURL: URL, width: Int, height: Int, frameRate: Int = 30, enableAudio: Bool = true) throws {
+        try self.init(
+            outputURL: outputURL,
+            width: width,
+            height: height,
+            frameRate: frameRate,
+            enableSystemAudio: false,
+            enableMicrophoneAudio: enableAudio
+        )
     }
     
     public func start() throws {
@@ -138,9 +175,9 @@ public final class VideoEncoder {
         }
     }
     
-    public func appendAudio(sampleBuffer: CMSampleBuffer) {
+    private func appendAudioSample(sampleBuffer: CMSampleBuffer, to targetInput: AVAssetWriterInput?) {
         encodingQueue.async { [weak self] in
-            guard let self = self, !self.isFinished, let aInput = self.audioInput else { return }
+            guard let self = self, !self.isFinished, let input = targetInput else { return }
             guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
             
             let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
@@ -159,16 +196,28 @@ public final class VideoEncoder {
             
             if self.totalPausedDuration.seconds > 0.001 {
                 if let adjustedBuffer = self.adjustTimestamp(sampleBuffer: sampleBuffer, newPTS: adjustedPTS) {
-                    if aInput.isReadyForMoreMediaData {
-                        aInput.append(adjustedBuffer)
+                    if input.isReadyForMoreMediaData {
+                        input.append(adjustedBuffer)
                     }
                 }
             } else {
-                if aInput.isReadyForMoreMediaData {
-                    aInput.append(sampleBuffer)
+                if input.isReadyForMoreMediaData {
+                    input.append(sampleBuffer)
                 }
             }
         }
+    }
+    
+    public func appendSystemAudio(sampleBuffer: CMSampleBuffer) {
+        appendAudioSample(sampleBuffer: sampleBuffer, to: systemAudioInput)
+    }
+    
+    public func appendMicrophoneAudio(sampleBuffer: CMSampleBuffer) {
+        appendAudioSample(sampleBuffer: sampleBuffer, to: micAudioInput)
+    }
+    
+    public func appendAudio(sampleBuffer: CMSampleBuffer) {
+        appendMicrophoneAudio(sampleBuffer: sampleBuffer)
     }
     
     private func adjustTimestamp(sampleBuffer: CMSampleBuffer, newPTS: CMTime) -> CMSampleBuffer? {
@@ -203,7 +252,8 @@ public final class VideoEncoder {
                 return
             }
             
-            self.audioInput?.markAsFinished()
+            self.systemAudioInput?.markAsFinished()
+            self.micAudioInput?.markAsFinished()
             self.writerInput.markAsFinished()
             self.assetWriter.finishWriting {
                 if let error = self.assetWriter.error {

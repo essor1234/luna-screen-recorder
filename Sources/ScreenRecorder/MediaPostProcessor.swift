@@ -31,14 +31,30 @@ public final class MediaPostProcessor {
         let tempURL = inputURL.deletingPathExtension().appendingPathExtension("web.mp4")
         
         let asset = AVURLAsset(url: inputURL)
-        let hasAudio = !asset.tracks(withMediaType: .audio).isEmpty
+        let audioTracks = asset.tracks(withMediaType: .audio)
         
         let process = Process()
         process.executableURL = URL(fileURLWithPath: ffmpeg)
         
-        if hasAudio {
-            // Video already contains recorded microphone audio: copy both video and audio directly
+        if audioTracks.count >= 2 {
+            // Dual audio: both system sound and microphone recorded. Mix into a single stereo AAC track.
             process.arguments = [
+                "-nostdin",
+                "-y",
+                "-i", inputURL.path,
+                "-filter_complex", "[0:a:0][0:a:1]amix=inputs=2:duration=longest:dropout_transition=0,aformat=channel_layouts=stereo:sample_rates=48000[a]",
+                "-map", "0:v",
+                "-map", "[a]",
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-movflags", "+faststart",
+                tempURL.path
+            ]
+        } else if audioTracks.count == 1 {
+            // Single audio track (system sound or mic only): copy both video and audio directly
+            process.arguments = [
+                "-nostdin",
                 "-y",
                 "-i", inputURL.path,
                 "-c", "copy",
@@ -48,6 +64,7 @@ public final class MediaPostProcessor {
         } else {
             // Muted recording: inject silent null audio so web/Gemini accept it
             process.arguments = [
+                "-nostdin",
                 "-y",
                 "-i", inputURL.path,
                 "-f", "lavfi",
@@ -98,6 +115,7 @@ public final class MediaPostProcessor {
         let vfFilter = "fps=12,scale=min(800\\,iw):-2:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128:reserve_transparent=0[p];[s1][p]paletteuse=dither=bayer:bayer_scale=3"
         
         process.arguments = [
+            "-nostdin",
             "-y",
             "-t", String(format: "%.1f", maxSeconds),
             "-i", inputURL.path,

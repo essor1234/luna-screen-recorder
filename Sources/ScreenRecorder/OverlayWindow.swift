@@ -14,10 +14,17 @@ public final class OverlayWindowController: NSWindowController {
         dismissAll()
         
         Task { @MainActor in
+            // Hide all Luna app windows during selection so screen is 100% clean and unobstructed
+            RecordingsWindowController.shared.window?.orderOut(nil)
+            SettingsWindowController.shared.window?.orderOut(nil)
+            OnboardingWindowController.shared.window?.orderOut(nil)
+            RecordingHUDController.shared.hideForSelection()
+            
             do {
                 let content = try await CaptureEngine.fetchShareableContent()
                 guard let mainDisplay = content.displays.first else {
                     print("[OverlayWindow] Failed to fetch displays for overlay")
+                    RecordingHUDController.shared.showIdleBarIfNeeded()
                     return
                 }
                 
@@ -28,7 +35,7 @@ public final class OverlayWindowController: NSWindowController {
                         backing: .buffered,
                         defer: false
                     )
-                    window.level = .floating
+                    window.level = .screenSaver
                     window.backgroundColor = .clear
                     window.isOpaque = false
                     window.hasShadow = false
@@ -50,6 +57,7 @@ public final class OverlayWindowController: NSWindowController {
                         self?.selectionHandler?(target)
                     } onCancel: { [weak self] in
                         self?.dismissAll()
+                        RecordingHUDController.shared.showIdleBarIfNeeded()
                     }
                     
                     window.contentView = overlayView
@@ -60,6 +68,7 @@ public final class OverlayWindowController: NSWindowController {
                 NSApp.activate(ignoringOtherApps: true)
             } catch {
                 print("[OverlayWindow] Failed to fetch shareable content: \(error)")
+                RecordingHUDController.shared.showIdleBarIfNeeded()
                 let nsError = error as NSError
                 if nsError.code == -3801 || nsError.domain.contains("ScreenCaptureKit") {
                     PermissionManager.shared.showPermissionAlert()

@@ -15,8 +15,8 @@ public final class ToastHUDController: NSObject {
     }
     
     public func show(
-        title: String = "Recording URL Copied",
-        message: String = "Ready to paste (⌘V) into your LLM",
+        title: String = "Clipboard Updated",
+        message: String = "Recording info & path copied to clipboard (⌘V)",
         fileURL: URL? = nil
     ) {
         self.currentFileURL = fileURL
@@ -115,7 +115,7 @@ public final class ToastHUDController: NSObject {
         self.iconView = icon
         
         // Title (Bold)
-        let title = NSTextField(labelWithString: "Recording URL Copied")
+        let title = NSTextField(labelWithString: "Clipboard Updated")
         title.frame = NSRect(x: 48, y: 24, width: 260, height: 17)
         title.font = NSFont.systemFont(ofSize: 12.5, weight: .bold)
         title.textColor = .white
@@ -123,7 +123,7 @@ public final class ToastHUDController: NSObject {
         self.titleLabel = title
         
         // Message / Subtitle
-        let message = NSTextField(labelWithString: "Ready to paste (⌘V) into your LLM")
+        let message = NSTextField(labelWithString: "Recording info & path copied to clipboard (⌘V)")
         message.frame = NSRect(x: 48, y: 8, width: 260, height: 15)
         message.font = NSFont.systemFont(ofSize: 11, weight: .regular)
         message.textColor = NSColor.white.withAlphaComponent(0.82)
