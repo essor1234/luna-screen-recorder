@@ -1,0 +1,18 @@
+{
+  "$schema": "../cloud/node_modules/wrangler/config-schema.json",
+  // Relay between the deck on the laptop (luna.nimit.dev/deck/?live=KEY) and the phone remote
+  // (luna.nimit.dev/deck/remote/?key=KEY). One Durable Object holds every open socket.
+  "name": "luna-remote",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  // Off on purpose: request logs would include the key from the WebSocket URL.
+  "observability": { "enabled": false },
+
+  "durable_objects": {
+    "bindings": [{ "name": "RELAY", "class_name": "Relay" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Relay"] }]
+
+  // Secret (not in this file): REMOTE_KEY, set with `npx wrangler secret put REMOTE_KEY`.
+  // Changing it locks out every old link.
+}

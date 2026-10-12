@@ -25,3 +25,12 @@ xcuserdata/
 .cache/
 *.swp
 *~
+
+# Site (luna.nimit.dev)
+.gstack/
+site/.wrangler/
+site/video/node_modules/
+site/video/out/
+!site/media/luna-demo.mp4
+!site/media/luna-demo-vi.mp4
+presenter/.wrangler/

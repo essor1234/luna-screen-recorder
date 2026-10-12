@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#FFFFFF">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Luna Remote">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>Luna Remote</title>
+<link rel="icon" type="image/png" href="/media/favicon-64.png">
+<link rel="apple-touch-icon" href="/media/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500&family=M+PLUS+Rounded+1c:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+  /* Phone remote for /deck/. One column: status, where you are, notes, then thumb-sized Back/Next at the bottom. */
+  :root {
+    --bg: #FFFFFF;
+    --ink: #16141A;
+    --ink-2: #4A4752;
+    --ink-3: #7E7A87;
+    --line: #E7E5EB;
+    --soft: #F6F5F8;
+    --moon: #F4C430;
+    --moon-wash: #FDF5D8;
+    --moon-line: #EFD88A;
+    --ok: #1E9E50;
+    --off: #E5483D;
+    --display: "M PLUS Rounded 1c", ui-rounded, system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: var(--bg); }
+  body { font-family: var(--display); color: var(--ink); -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
+  button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulation; }
+  button:disabled { opacity: .35; cursor: default; }
+  :focus-visible { outline: 3px solid var(--moon); outline-offset: 2px; }
+
+  .app { height: 100dvh; max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px;
+         padding: calc(env(safe-area-inset-top, 0px) + 14px) 16px calc(env(safe-area-inset-bottom, 0px) + 14px); }
+
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .status { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; color: var(--ink-2); min-width: 0; }
+  .status i { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--ink-3); }
+  .app[data-conn="live"] .status i { background: var(--ok); }
+  .app[data-conn="waiting"] .status i { background: var(--moon); }
+  .app[data-conn="connecting"] .status i { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+  .clock { display: flex; align-items: center; gap: 6px; }
+  .timer { font: 500 22px/1 var(--mono); font-variant-numeric: tabular-nums; background: var(--bg); border: 1.5px solid var(--line); border-radius: 999px; padding: 10px 16px; }
+  .timer.running { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .reset { border: 0; background: none; color: var(--ink-3); font-size: 14px; font-weight: 700; padding: 10px 6px; }
+
+  .now { display: grid; gap: 6px; }
+  .where { justify-self: start; background: var(--soft); border: 1.5px solid var(--line); border-radius: 999px; padding: 8px 14px; font-size: 15px; font-weight: 700; color: var(--ink-3); }
+  .where b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  h1 { margin: 6px 0 0; font-size: 32px; line-height: 1.1; font-weight: 800; letter-spacing: -0.02em; text-wrap: balance; }
+  .up { margin: 0; font-size: 16px; font-weight: 500; color: var(--ink-3); }
+
+  .banner { display: grid; gap: 10px; padding: 14px 16px; border-radius: 18px; background: var(--moon-wash); border: 1.5px solid var(--moon-line); font-size: 16px; line-height: 1.4; }
+  .banner p { margin: 0; }
+  .banner b { font-weight: 800; }
+  .banner button { justify-self: start; background: var(--ink); color: #fff; border: 0; border-radius: 999px; padding: 10px 16px; font-size: 15px; font-weight: 700; }
+  .banner code { font: 500 13px/1.4 var(--mono); word-break: break-all; user-select: all; -webkit-user-select: all; }
+
+  .notes { flex: 1; min-height: 0; overflow-y: auto; border-top: 1.5px solid var(--line); padding-top: 16px; }
+  .notes ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+  .notes li { font-size: 21px; line-height: 1.45; font-weight: 500; }
+  .notes li.none { color: var(--ink-3); font-size: 17px; }
+
+  .demo { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .play { height: 52px; padding: 0 22px 0 18px; border: 0; border-radius: 999px; background: var(--ink); color: #fff; font-size: 17px; font-weight: 800; display: inline-flex; align-items: center; gap: 10px; }
+  .play svg { width: 18px; height: 18px; }
+  .play .i-pause, .play.playing .i-play { display: none; }
+  .play.playing .i-pause { display: block; }
+  .seg { display: inline-flex; padding: 4px; gap: 4px; border: 1.5px solid var(--line); border-radius: 999px; background: var(--soft); }
+  .seg button { height: 42px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; font-size: 15px; font-weight: 700; color: var(--ink-2); }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+  .vt { font: 500 15px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--ink-2); }
+
+  .pad { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; }
+  .pad button { height: 88px; border-radius: 24px; font-size: 24px; font-weight: 800; transition: transform .08s ease; }
+  .pad button:active:not(:disabled) { transform: scale(.97); }
+  .back { background: var(--soft); border: 1.5px solid var(--line); }
+  .next { background: var(--ink); color: #fff; border: 0; }
+
+  /* Jump to any slide */
+  dialog { border: 0; padding: 0; width: min(560px, 100%); max-width: 100%; max-height: 80dvh; margin: auto auto 0; border-radius: 24px 24px 0 0; background: var(--bg); color: var(--ink); }
+  dialog::backdrop { background: rgba(22, 20, 26, .4); }
+  .sheet { display: flex; flex-direction: column; max-height: 80dvh; padding: 16px 16px calc(env(safe-area-inset-bottom, 0px) + 16px); gap: 10px; }
+  .sheet-head { display: flex; justify-content: space-between; align-items: center; }
+  .sheet-head h2 { margin: 0; font-size: 20px; font-weight: 800; }
+  .sheet-head button { border: 0; background: var(--soft); border-radius: 999px; padding: 8px 14px; font-weight: 700; }
+  .list { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: grid; gap: 4px; }
+  .list button { width: 100%; display: grid; grid-template-columns: 34px 1fr; align-items: center; gap: 8px; text-align: left; border: 0; background: none; border-radius: 14px; padding: 12px 10px; font-size: 18px; font-weight: 700; }
+  .list button span { font: 500 15px/1 var(--mono); color: var(--ink-3); }
+  .list button[aria-current="true"] { background: var(--soft); }
+
+  /* Locked */
+  .lock { min-height: 100dvh; display: grid; place-content: center; gap: 14px; padding: 24px 16px; max-width: 420px; margin: 0 auto; text-align: center; }
+  .lock svg { width: 64px; height: 64px; margin: 0 auto; }
+  .lock h1 { margin: 0; }
+  .lock p { margin: 0; font-size: 17px; line-height: 1.5; color: var(--ink-2); }
+  .lock a { color: var(--ink); font-weight: 700; }
+
+  @media (prefers-reduced-motion: reduce) { .app[data-conn="connecting"] .status i { animation: none; } .pad button { transition: none; } }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs><mask id="crescent-cut"><rect width="24" height="24" fill="#fff"/><circle cx="16.5" cy="8.5" r="8.2" fill="#000"/></mask></defs>
+  <symbol id="i-moon" viewBox="0 0 24 24"><circle cx="11" cy="13" r="10" fill="#F4C430" mask="url(#crescent-cut)"/></symbol>
+</svg>
+
+<main class="app" id="app" data-conn="connecting" hidden>
+  <header class="top">
+    <span class="status" role="status"><i></i><span id="status">Connecting</span></span>
+    <span class="clock">
+      <button class="reset" id="reset" type="button" hidden>Reset</button>
+      <button class="timer" id="timer" type="button" aria-label="Start or pause the timer">0:00</button>
+    </span>
+  </header>
+
+  <section class="now">
+    <button class="where" id="where" type="button" aria-haspopup="dialog">Slide <b id="pos">1</b> of <b id="total">11</b></button>
+    <h1 id="title">Luna</h1>
+    <p class="up" id="up"></p>
+  </section>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <section class="notes" aria-label="Speaker notes"><ul id="notes"></ul></section>
+
+  <section class="demo" id="demo" hidden aria-label="Demo video">
+    <button class="play" id="play" type="button">
+      <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l13-7.5z" fill="currentColor"/></svg>
+      <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="5.5" y="4.5" width="4.5" height="15" rx="1.2" fill="currentColor"/><rect x="14" y="4.5" width="4.5" height="15" rx="1.2" fill="currentColor"/></svg>
+      <span id="play-label">Play</span>
+    </button>
+    <span class="seg" role="group" aria-label="Video language">
+      <button type="button" data-lang="en" aria-pressed="true">English</button>
+      <button type="button" data-lang="vi" aria-pressed="false" lang="vi">Tiếng Việt</button>
+    </span>
+    <span class="vt" id="vt"></span>
+  </section>
+
+  <nav class="pad" aria-label="Slides">
+    <button class="back" id="back" type="button">Back</button>
+    <button class="next" id="next" type="button">Next</button>
+  </nav>
+</main>
+
+<div class="lock" id="lock" hidden>
+  <svg aria-hidden="true"><use href="#i-moon"/></svg>
+  <h1 id="lock-title">This remote is locked</h1>
+  <p id="lock-text">Open your private remote link. It ends in <b>?key=</b> followed by a long code.</p>
+  <p><a href="/deck/">Open the public deck</a></p>
+</div>
+
+<dialog id="jump" aria-label="Jump to a slide">
+  <div class="sheet">
+    <div class="sheet-head"><h2>Jump to a slide</h2><button type="button" id="jump-close">Close</button></div>
+    <ul class="list" id="list"></ul>
+  </div>
+</dialog>
+
+<script>
+(function () {
+  var RELAY = 'wss://luna-remote.nimitbhargava.workers.dev/ws';
+  var BAD_KEY = 4001;
+  var $ = function (id) { return document.getElementById(id); };
+  var app = $('app');
+
+  // The key stays in the address bar so "Add to Home Screen" keeps it. localStorage is a fallback for this browser.
+  var key = new URLSearchParams(location.search).get('key');
+  try { if (key) localStorage.setItem('luna-remote-key', key); else key = localStorage.getItem('luna-remote-key'); } catch (e) {}
+
+  var s = {
+    conn: 'connecting',   // connecting | open | locked
+    deck: false,          // laptop deck connected to the relay
+    notes: {},            // title -> lines, from the relay
+    titles: [],           // from the deck; falls back to the notes' order
+    index: 0,
+    holdUntil: 0,         // ignore deck index briefly after a tap, so fast taps don't flicker
+    demoIndex: -1,
+    armed: true,          // laptop has had a click or key press, so the demo can play sound
+    video: null
+  };
+
+  var ws = null, retry = 0, retryTimer = null, pingTimer = null;
+
+  function connect() {
+    clearTimeout(retryTimer);
+    if (ws && ws.readyState <= 1) return;
+    s.conn = 'connecting'; render();
+    ws = new WebSocket(RELAY + '?role=remote&key=' + encodeURIComponent(key));
+    ws.onopen = function () { retry = 0; s.conn = 'open'; render(); };
+    ws.onmessage = function (e) {
+      if (e.data === 'pong') return;
+      var m; try { m = JSON.parse(e.data); } catch (err) { return; }
+      if (m.type === 'hello') { s.notes = m.notes || {}; s.deck = !!m.deck; }
+      else if (m.type === 'presence') { s.deck = !!m.deck; if (!s.deck) s.video = null; }
+      else if (m.type === 'state') {
+        s.deck = true;
+        s.titles = m.titles || s.titles;
+        if (Date.now() > s.holdUntil || m.index === s.index) s.index = m.index;
+        s.demoIndex = typeof m.demoIndex === 'number' ? m.demoIndex : -1;
+        s.armed = m.armed !== false;
+        s.video = m.video || null;
+      }
+      render();
+    };
+    ws.onclose = function (e) {
+      ws = null;
+      if (e.code === BAD_KEY) { s.conn = 'locked'; try { localStorage.removeItem('luna-remote-key'); } catch (err) {} render(); return; }
+      s.conn = 'connecting'; s.deck = false; render();
+      retry = Math.min(retry + 1, 4);
+      retryTimer = setTimeout(connect, [0, 1000, 2000, 4000, 8000][retry]);
+    };
+  }
+
+  function send(msg) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); }
+  function buzz() { if (navigator.vibrate) navigator.vibrate(12); }
+
+  function titles() { return s.titles.length ? s.titles : Object.keys(s.notes); }
+
+  function go(i) {
+    var t = titles();
+    i = Math.max(0, Math.min(t.length - 1, i));
+    if (i === s.index) return;
+    s.index = i;
+    s.holdUntil = Date.now() + 800;
+    buzz();
+    if (s.deck) { send({ type: 'cmd', action: 'go', index: i }); if (!clock.started) startClock(); }
+    render();
+  }
+
+  // Timer: starts on the first slide change with the laptop connected, or by tapping it.
+  var clock = { started: false, running: false, base: 0, from: 0 };
+  function elapsed() { return clock.base + (clock.running ? Date.now() - clock.from : 0); }
+  function startClock() { clock.started = true; clock.running = true; clock.from = Date.now(); renderClock(); }
+  function renderClock() {
+    var t = Math.floor(elapsed() / 1000);
+    $('timer').textContent = Math.floor(t / 60) + ':' + ('0' + (t % 60)).slice(-2);
+    $('timer').classList.toggle('running', clock.running);
+    $('reset').hidden = clock.running || t === 0;
+  }
+  $('timer').addEventListener('click', function () {
+    if (clock.running) { clock.base = elapsed(); clock.running = false; renderClock(); }
+    else startClock();
+  });
+  $('reset').addEventListener('click', function () { clock = { started: false, running: false, base: 0, from: 0 }; renderClock(); });
+  setInterval(function () { if (clock.running) renderClock(); }, 500);
+
+  function fmt(t) { t = Math.max(0, Math.floor(t || 0)); return Math.floor(t / 60) + ':' + ('0' + (t % 60)).slice(-2); }
+
+  function banner(html, action) {
+    var b = $('banner');
+    if (!html) { b.hidden = true; b.innerHTML = ''; delete b.dataset.html; return; }
+    if (b.dataset.html === html) { b.hidden = false; return; }
+    b.dataset.html = html;
+    b.innerHTML = html;
+    if (action) {
+      var btn = document.createElement('button');
+      btn.type = 'button'; btn.textContent = action.label;
+      btn.addEventListener('click', action.run);
+      b.appendChild(btn);
+    }
+    b.hidden = false;
+  }
+
+  function laptopLink() { return location.origin + '/deck/?live=' + encodeURIComponent(key); }
+
+  function render() {
+    if (s.conn === 'locked' || !key) {
+      app.hidden = true; $('lock').hidden = false;
+      if (key) { $('lock-title').textContent = 'This key no longer works'; $('lock-text').textContent = 'The key was changed, so old links are locked out. Open the newest remote link.'; }
+      return;
+    }
+    app.hidden = false; $('lock').hidden = true;
+
+    var live = s.conn === 'open' && s.deck;
+    app.dataset.conn = s.conn === 'open' ? (s.deck ? 'live' : 'waiting') : 'connecting';
+    $('status').textContent = s.conn !== 'open' ? 'Connecting' : s.deck ? 'Laptop connected' : 'Laptop not connected';
+
+    var t = titles(), n = t.length, i = Math.min(s.index, Math.max(0, n - 1));
+    $('pos').textContent = n ? i + 1 : '-';
+    $('total').textContent = n || '-';
+    $('title').textContent = t[i] || 'Waiting for the deck';
+    $('up').textContent = i + 1 < n ? 'Next: ' + t[i + 1] : n ? 'Last slide' : '';
+    $('back').disabled = i <= 0;
+    $('next').disabled = i >= n - 1;
+
+    // Rebuild notes only when the slide changes, so video ticks don't reset the scroll.
+    var lines = s.notes[t[i]] || [];
+    var ul = $('notes'), shown = i + '|' + t[i] + '|' + lines.length;
+    if (ul.dataset.shown !== shown) {
+      ul.dataset.shown = shown;
+      ul.innerHTML = '';
+      if (!lines.length) { var li = document.createElement('li'); li.className = 'none'; li.textContent = 'No notes for this slide.'; ul.appendChild(li); }
+      lines.forEach(function (line) { var li = document.createElement('li'); li.textContent = line; ul.appendChild(li); });
+      ul.parentNode.scrollTop = 0;
+    }
+
+    var onDemo = live && (i === s.demoIndex || t[i] === 'Demo');
+    $('demo').hidden = !onDemo;
+    if (onDemo) {
+      var v = s.video || {};
+      $('play').classList.toggle('playing', !!v.playing);
+      $('play-label').textContent = v.playing ? 'Pause' : 'Play';
+      document.querySelectorAll('.seg button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.lang === (v.lang || 'en'))); });
+      $('vt').textContent = v.d ? fmt(v.t) + ' / ' + fmt(v.d) : '';
+    }
+
+    if (s.conn !== 'open') banner('');
+    else if (!s.deck) banner('<p><b>The laptop isn\'t connected.</b> Open the laptop link on your Mac. Until then, Back and Next only move through your notes.</p>', { label: 'Copy laptop link', run: copyLaptopLink });
+    else if (onDemo && s.video && s.video.blocked) banner('<p><b>The laptop blocked the sound.</b> Click the play button on the laptop once, then use this remote again.</p>');
+    else if (!s.armed) banner('<p><b>On the laptop, click Start presentation once.</b> Browsers only allow full screen and demo sound after a real click there. After that, run it all from here.</p>');
+    else banner('');
+  }
+
+  function copyLaptopLink(e) {
+    var btn = e.currentTarget, link = laptopLink();
+    var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy laptop link'; }, 2000); };
+    var fallback = function () {
+      if ($('banner').querySelector('code')) return;
+      var c = document.createElement('code'); c.textContent = link; $('banner').insertBefore(c, btn);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(done, fallback);
+    else fallback();
+  }
+
+  $('next').addEventListener('click', function () { go(s.index + 1); });
+  $('back').addEventListener('click', function () { go(s.index - 1); });
+  $('play').addEventListener('click', function () {
+    buzz();
+    send({ type: 'cmd', action: s.video && s.video.playing ? 'pause' : 'play' });
+  });
+  document.querySelectorAll('.seg button').forEach(function (b) {
+    b.addEventListener('click', function () { buzz(); send({ type: 'cmd', action: 'lang', lang: b.dataset.lang }); });
+  });
+  document.addEventListener('keydown', function (e) {
+    if ($('jump').open) return;
+    if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); go(s.index + 1); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); go(s.index - 1); }
+  });
+
+  // Jump sheet
+  $('where').addEventListener('click', function () {
+    var list = $('list'), t = titles();
+    list.innerHTML = '';
+    t.forEach(function (title, n) {
+      var li = document.createElement('li'), b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('aria-current', String(n === s.index));
+      b.innerHTML = '<span></span>';
+      b.firstChild.textContent = n + 1;
+      b.appendChild(document.createTextNode(title));
+      b.addEventListener('click', function () { $('jump').close(); go(n); });
+      li.appendChild(b); list.appendChild(li);
+    });
+    $('jump').showModal();
+  });
+  $('jump-close').addEventListener('click', function () { $('jump').close(); });
+  $('jump').addEventListener('click', function (e) { if (e.target === $('jump')) $('jump').close(); });
+
+  // Keep the screen on while presenting, and reconnect as soon as the phone wakes up.
+  var lock = null;
+  function wake() {
+    if (!('wakeLock' in navigator) || document.visibilityState !== 'visible' || lock) return;
+    navigator.wakeLock.request('screen').then(function (l) { lock = l; l.addEventListener('release', function () { lock = null; }); }, function () {});
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible') return;
+    wake();
+    if (key && s.conn !== 'locked' && !(ws && ws.readyState <= 1)) { retry = 0; connect(); }
+  });
+  document.addEventListener('click', wake);
+  pingTimer = setInterval(function () { if (ws && ws.readyState === 1) ws.send('ping'); }, 25000);
+
+  renderClock();
+  render();
+  if (key) { connect(); wake(); }
+})();
+</script>
+</body>
+</html>
