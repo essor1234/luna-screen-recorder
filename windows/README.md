@@ -45,6 +45,8 @@ This quick version uses pinned ScreenRecorderLib7.0.1 with H.264 High at30fps, f
 
 Stopping before the encoder has produced a frame cancels the take, removes the empty file, and shows a recording failure notice. Area selection tolerates horizontal and vertical movement before the drag has both dimensions.
 
+Area and screen sources explicitly use Windows Graphics Capture, as window sources already do. Desktop Duplication failed to initialize on a tested hybrid AMD/NVIDIA system when the executable was named `Luna.exe`; switching only the display capture API resolved that failure. Keep the executable name and the bundled dependencies intact.
+
 The Library currently shows file/date/size rows rather than per-clip thumbnail and duration badges; its Fullscreen button maximizes the Library. Mixed-DPI geometry, all audio combinations/privacy settings, Windows N, Gemini upload and clean Windows Sandbox need the manual checks below. Local synthetic own-window capture is evidence for actual video/stop/clipboard behavior, not proof of every real-monitor acceptance item. The app makes no network calls.
 
 ## Before opening a pull request

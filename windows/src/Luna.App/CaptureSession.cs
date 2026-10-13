@@ -182,8 +182,8 @@ public partial class App
 internal sealed record CaptureTarget(RecordingSourceBase Source, CaptureMode Mode, Forms.Screen Monitor, int Width, int Height, double Scale, IntPtr Window)
 {
     internal static CaptureTarget ScreenUnderCursor() => Screen(Forms.Screen.FromPoint(Forms.Cursor.Position));
-    internal static CaptureTarget Screen(Forms.Screen screen) => new(new DisplayRecordingSource(screen.DeviceName), CaptureMode.Screen, screen, screen.Bounds.Width, screen.Bounds.Height, Native.ScaleAt(screen.Bounds.Left, screen.Bounds.Top), IntPtr.Zero);
-    internal static CaptureTarget Area(Forms.Screen screen, System.Drawing.Rectangle area) => new(new DisplayRecordingSource(screen.DeviceName) { SourceRect = new ScreenRect(area.Left - screen.Bounds.Left, area.Top - screen.Bounds.Top, area.Width, area.Height) }, CaptureMode.Area, screen, area.Width, area.Height, Native.ScaleAt(screen.Bounds.Left, screen.Bounds.Top), IntPtr.Zero);
+    internal static CaptureTarget Screen(Forms.Screen screen) => new(new DisplayRecordingSource(screen.DeviceName) { RecorderApi = RecorderApi.WindowsGraphicsCapture }, CaptureMode.Screen, screen, screen.Bounds.Width, screen.Bounds.Height, Native.ScaleAt(screen.Bounds.Left, screen.Bounds.Top), IntPtr.Zero);
+    internal static CaptureTarget Area(Forms.Screen screen, System.Drawing.Rectangle area) => new(new DisplayRecordingSource(screen.DeviceName) { RecorderApi = RecorderApi.WindowsGraphicsCapture, SourceRect = new ScreenRect(area.Left - screen.Bounds.Left, area.Top - screen.Bounds.Top, area.Width, area.Height) }, CaptureMode.Area, screen, area.Width, area.Height, Native.ScaleAt(screen.Bounds.Left, screen.Bounds.Top), IntPtr.Zero);
     internal static CaptureTarget ForWindow(IntPtr hwnd)
     {
         var rectangle = Native.WindowBounds(hwnd); var screen = Forms.Screen.FromHandle(hwnd);
