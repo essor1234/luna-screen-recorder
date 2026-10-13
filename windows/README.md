@@ -47,6 +47,8 @@ Stopping before the encoder has produced a frame cancels the take, removes the e
 
 Area and screen sources explicitly use Windows Graphics Capture, as window sources already do. Desktop Duplication failed to initialize on a tested hybrid AMD/NVIDIA system when the executable was named `Luna.exe`; switching only the display capture API resolved that failure. Keep the executable name and the bundled dependencies intact.
 
+The preview uses software H.264 encoding. Hardware encoding intermittently stalled in native finalization and also produced `0xc00d36b5` encoder failures in the accepted baseline on the tested hybrid-GPU machine. Changing only the supported hardware-encoding option to Off completed controlled Area, Window and repeated Screen captures. Software encoding can use more CPU and the measured average frame rate remains below 30 fps. This improves the observed native behavior on this machine; it is not evidence of universal encoder or timing guarantees.
+
 The Library currently shows file/date/size rows rather than per-clip thumbnail and duration badges; its Fullscreen button opens the player across the monitor with playback controls and an Exit fullscreen button; Esc returns to inline playback. Mixed-DPI geometry, all audio combinations/privacy settings, Windows N, Gemini upload and clean Windows Sandbox need the manual checks below. Local synthetic own-window capture is evidence for actual video/stop/clipboard behavior, not proof of every real-monitor acceptance item. The app makes no network calls.
 
 ## Tested preview and remaining acceptance

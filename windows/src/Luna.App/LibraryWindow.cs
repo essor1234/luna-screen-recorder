@@ -84,8 +84,8 @@ internal sealed class LibraryWindow : Window
         controls.Children.Add(playbackTime);
         fullscreen.Click += (_, _) => ToggleFullscreen(); controls.Children.Add(fullscreen);
         foreach (var button in new[] { copy, files, delete }) { button.Margin = new Thickness(0, 8, 0, 0); button.Padding = new Thickness(12, 7, 12, 7); pane.Children.Add(button); }
-        copy.Click += async (_, _) => { var selected = Selected(); if (selected.Length == 0) return; try { var prompts = selected.Select(path => (path, Prompt.LoadOrRegenerate(path))).ToArray(); await ClipboardService.Text(prompts.Length == 1 ? prompts[0].Item2 : Prompt.Batch(prompts)); notice.Text = "Copied for LLMs (Ctrl+V)"; } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or COMException) { notice.Text = "Could not copy: " + ex.Message; } };
-        files.Click += async (_, _) => { var selected = Selected(); if (selected.Length == 0) return; try { await ClipboardService.Files(selected); notice.Text = "Copied MP4"; } catch (COMException ex) { notice.Text = "Could not copy: " + ex.Message; } };
+        copy.Click += async (_, _) => { var selected = Selected(); if (selected.Length == 0) return; try { var prompts = selected.Select(path => (path, Prompt.LoadOrRegenerate(path))).ToArray(); await ClipboardService.Text(prompts.Length == 1 ? prompts[0].Item2 : Prompt.Batch(prompts)); notice.Text = "Copied for LLMs (Ctrl+V)"; } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ExternalException) { notice.Text = "Could not copy: " + ex.Message; } };
+        files.Click += async (_, _) => { var selected = Selected(); if (selected.Length == 0) return; try { await ClipboardService.Files(selected); notice.Text = "Copied MP4"; } catch (ExternalException ex) { notice.Text = "Could not copy: " + ex.Message; } };
         delete.Click += (_, _) => Delete();
         var explorer = new Button { Content = "Show in Explorer", Margin = new Thickness(0, 8, 0, 0) }; explorer.Click += (_, _) => { foreach (var path in Selected()) System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", "/select,\"" + path + "\"") { UseShellExecute = true }); }; pane.Children.Add(explorer);
         player.MediaOpened += (_, _) => { player.Pause(); playing = false; if (player.NaturalDuration.HasTimeSpan) scrub.Maximum = player.NaturalDuration.TimeSpan.TotalSeconds; }; player.MediaEnded += (_, _) => { playing = false; player.Pause(); player.Position = TimeSpan.Zero; }; player.MediaFailed += (_, args) => { Release(); notice.Text = "Could not play this recording: " + args.ErrorException.Message; };
@@ -110,7 +110,11 @@ internal sealed class LibraryWindow : Window
     {
         var selection = list.SelectedItems.Cast<RecordingRow>().ToArray(); var n = selection.Length;
         var next = n == 1 ? selection[0].Path : null;
-        if (!string.Equals(player.Source?.LocalPath, next, StringComparison.OrdinalIgnoreCase)) { Release(); if (next != null) player.Source = new Uri(next); }
+        if (!string.Equals(player.Source?.LocalPath, next, StringComparison.OrdinalIgnoreCase))
+        {
+            Release();
+            if (next != null) { player.Source = new Uri(next); player.Pause(); }
+        }
         empty.Visibility = list.Items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         list.Visibility = list.Items.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         pane.Visibility = n == 0 ? Visibility.Collapsed : Visibility.Visible;

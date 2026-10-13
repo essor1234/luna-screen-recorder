@@ -91,7 +91,9 @@ public partial class App
                 IsFixedFramerate = true,
                 Bitrate = Luna.Core.Encoding.BitrateCeiling(size),
                 Quality = 55,
-                IsHardwareEncodingEnabled = true,
+                // The hardware encoder failed or stalled finalization on the tested hybrid GPU.
+                // SRL recommends software encoding for this native encoder instability.
+                IsHardwareEncodingEnabled = false,
                 IsMp4FastStartEnabled = true,
                 Encoder = new H264VideoEncoder { EncoderProfile = H264Profile.High, BitrateMode = H264BitrateControlMode.UnconstrainedVBR }
             },
@@ -197,7 +199,7 @@ public partial class App
                 if (Settings.AutoCopyForLlms && prompt != null)
                 {
                     try { await ClipboardService.Text(prompt); copied = true; }
-                    catch (System.Runtime.InteropServices.COMException ex) { Log(ex.ToString()); warning = (warning == null ? "" : warning + " ") + "Clipboard is busy. Copy again from Library."; }
+                    catch (System.Runtime.InteropServices.ExternalException ex) { Log(ex.ToString()); warning = (warning == null ? "" : warning + " ") + "Clipboard is busy. Copy again from Library."; }
                 }
                 new ToastWindow(copied ? "Clipboard updated" : "Recording saved", copied ? "Path and context copied (Ctrl+V)" : "Saved to your library", () => OpenLibrary(saved)).Show();
                 if (warning != null) ShowNotice(warning);
