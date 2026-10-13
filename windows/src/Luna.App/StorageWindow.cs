@@ -13,7 +13,7 @@ internal sealed class StorageWindow : Window
         Title = "Recording storage"; Width = 480; Height = 290; ResizeMode = ResizeMode.NoResize; Native.Exclude(this);
         var panel = new StackPanel { Margin = new Thickness(24) }; Content = panel;
         var total = new TextBlock(); var reclaim = new TextBlock { Margin = new Thickness(0, 8, 0, 12) }; panel.Children.Add(total); panel.Children.Add(reclaim);
-        var days = new ComboBox { ItemsSource = new[] { 7, 15, 30, 60 }, SelectedItem = app.Settings.RetentionDays, Margin = new Thickness(0, 0, 0, 12) }; panel.Children.Add(days);
+        var days = new ComboBox { ItemsSource = new[] { 7, 15, 30, 60 }, SelectedItem = app.Settings.RetentionDays, Margin = new Thickness(0, 0, 0, 12) }; panel.Children.Add(days); Native.Exclude(days);
         var automatic = new CheckBox { Content = "Delete old recordings automatically", IsChecked = app.Settings.AutoDelete, Margin = new Thickness(0, 0, 0, 12) }; panel.Children.Add(automatic);
         var clean = new Button { Padding = new Thickness(8, 6, 8, 6) }; panel.Children.Add(clean);
         var savedDays = app.Settings.RetentionDays; var savedAutomatic = app.Settings.AutoDelete;

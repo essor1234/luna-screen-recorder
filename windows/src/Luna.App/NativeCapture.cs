@@ -13,7 +13,7 @@ internal static partial class Native
     [DllImport("user32.dll")] internal static extern bool IsWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out Bounds bounds);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out int value, int size);
-    [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
     internal static Rectangle WindowBounds(IntPtr window) { if (!GetWindowRect(window, out var b)) throw new InvalidOperationException("Window is no longer available."); return Rectangle.FromLTRB(b.Left, b.Top, b.Right, b.Bottom); }
     internal static bool EligibleWindow(IntPtr window)
     {

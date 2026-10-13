@@ -34,6 +34,11 @@ internal sealed class FloatingBar : Window
     internal void Refresh()
     {
         row.Children.Clear(); clock = null;
+        if (app.IsSaving)
+        {
+            clock = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 6, 0) };
+            row.Children.Add(clock); UpdateTime(); Add("Library", app.OpenLibrary); Add("✕", app.ToggleBar); return;
+        }
         if (!app.IsRecording)
         {
             foreach (var value in Enum.GetValues<CaptureMode>())
@@ -42,14 +47,14 @@ internal sealed class FloatingBar : Window
             }
         }
         else { clock = new TextBlock { Foreground = app.IsPaused ? Brushes.DarkOrange : Brushes.Red, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 6, 0) }; row.Children.Add(clock); UpdateTime(); }
-        var system = Add("System audio: " + (app.Settings.SystemAudio ? "On" : "Off"), () => { app.Settings.SystemAudio = !app.Settings.SystemAudio; app.Save(); }); system.IsEnabled = !app.IsRecording;
-        var microphone = Add(app.Settings.Microphone == "none" ? "Muted ▾" : "Microphone ▾", () => { }); microphone.IsEnabled = !app.IsRecording;
+        var system = Add("System audio: " + (app.EffectiveSystemAudio ? "On" : "Off"), () => { app.Settings.SystemAudio = !app.Settings.SystemAudio; app.Save(); }); system.IsEnabled = !app.IsBusy;
+        var microphone = Add(app.EffectiveMicrophone + " ▾", () => { }); microphone.IsEnabled = !app.IsBusy;
         microphone.Click += (_, _) => { microphone.ContextMenu = MicrophoneMenu(app); microphone.ContextMenu.PlacementTarget = microphone; microphone.ContextMenu.IsOpen = true; };
         if (app.IsRecording) { Add(app.IsPaused ? "Resume" : "Pause", app.PauseRecording).ToolTip = "Pause recording (Ctrl+Alt+P)"; Add("Stop", app.StopRecording).ToolTip = "Stop recording (Ctrl+Alt+S)"; }
         else Add("● Record", () => app.RequestRecording(mode));
         Add("Library", app.OpenLibrary); Add("✕", app.ToggleBar);
     }
-    internal void UpdateTime() { if (clock != null) clock.Text = (app.IsPaused ? "● PAUSED " : "● REC ") + app.RecordingTime; }
+    internal void UpdateTime() { if (clock != null) clock.Text = app.IsSaving ? app.SavingStatus : (app.IsPaused ? "● PAUSED " : "● REC ") + app.RecordingTime; }
     internal static ContextMenu MicrophoneMenu(App app)
     {
         var menu = new ContextMenu(); menu.Items.Add(new MenuItem { Header = "Microphone", IsEnabled = false });

@@ -8,7 +8,7 @@ public static class Mp4FastStart
 {
     private readonly record struct Box(long Offset, long Size, int Header, string Type);
 
-    public static void Apply(string path)
+    public static void Apply(string path, IProgress<double>? progress = null)
     {
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
@@ -20,7 +20,7 @@ public static class Mp4FastStart
                 var media = boxes.Where(b => b.Type == "mdat").ToArray();
                 if (indices.Length != 1 || media.Length == 0 || boxes.Any(b => b.Type == "moof")) throw new InvalidDataException("Expected a nonfragmented MP4 with one index.");
                 var index = indices[0];
-                if (index.Offset < media[0].Offset) return;
+                if (index.Offset < media[0].Offset) { progress?.Report(1); return; }
                 if (index.Size > 64 * 1024 * 1024) throw new InvalidDataException("MP4 index is too large.");
                 var bytes = new byte[(int)index.Size]; input.Position = index.Offset; input.ReadExactly(bytes);
                 Patch(bytes, index.Header, bytes.Length, index, media);
@@ -29,13 +29,19 @@ public static class Mp4FastStart
                 {
                     if (box == media[0]) output.Write(bytes);
                     if (box == index) continue;
-                    input.Position = box.Offset; Copy(input, output, box.Size);
+                    input.Position = box.Offset; Copy(input, output, box.Size, input.Length, progress);
                 }
                 output.Flush(true);
             }
             File.Move(temporary, path, true);
+            progress?.Report(1);
         }
-        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        finally
+        {
+            // Preserve the original error if temporary-file cleanup also fails.
+            try { if (File.Exists(temporary)) File.Delete(temporary); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
     }
 
     private static IEnumerable<Box> ReadBoxes(Stream input, long start, long end)
@@ -87,14 +93,17 @@ public static class Mp4FastStart
         }
     }
 
-    private static void Copy(Stream input, Stream output, long remaining)
+    private static void Copy(Stream input, Stream output, long remaining, long total, IProgress<double>? progress)
     {
         var buffer = new byte[81920];
+        var lastPercent = (int)(output.Position * 100.0 / total);
         while (remaining > 0)
         {
             var count = input.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
             if (count == 0) throw new EndOfStreamException("MP4 changed during index relocation.");
             output.Write(buffer, 0, count); remaining -= count;
+            var percent = (int)(output.Position * 100.0 / total);
+            if (percent > lastPercent) { progress?.Report(Math.Min(0.99, percent / 100.0)); lastPercent = percent; }
         }
     }
 }

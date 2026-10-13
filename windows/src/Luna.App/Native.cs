@@ -22,7 +22,7 @@ internal static partial class Native
     }
     internal static double ScaleAt(int x, int y) { var monitor = MonitorFromPoint(new Point { X = x, Y = y }, 2); return GetDpiForMonitor(monitor, 0, out var dpi, out _) == 0 ? dpi / 96.0 : 1; }
     internal static void NoActivate(Window window) => window.SourceInitialized += (_, _) => { var hwnd = new WindowInteropHelper(window).Handle; SetWindowLongPtr(hwnd, -20, new IntPtr(GetWindowLongPtr(hwnd, -20).ToInt64() | 0x08000000)); };
-    [DllImport("user32.dll")] internal static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
+    [DllImport("user32.dll", SetLastError = true)] internal static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
     [DllImport("user32.dll")] internal static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint key);
     [DllImport("user32.dll")] internal static extern bool UnregisterHotKey(IntPtr hwnd, int id);
     [DllImport("shell32.dll")] private static extern int SHGetKnownFolderPath(ref Guid folder, uint flags, IntPtr token, out IntPtr path);
@@ -34,6 +34,6 @@ internal static partial class Native
     }
     internal static void Exclude(Window window) => window.SourceInitialized += (_, _) =>
     {
-        if (!SetWindowDisplayAffinity(new WindowInteropHelper(window).Handle, 0x11)) App.Log("Capture exclusion failed: " + Marshal.GetLastWin32Error());
+        Exclude(new WindowInteropHelper(window).Handle);
     };
 }

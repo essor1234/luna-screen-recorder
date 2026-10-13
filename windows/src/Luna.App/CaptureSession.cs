@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Threading;
@@ -24,6 +25,13 @@ public partial class App
     private string? recordingPath;
     private IntPtr targetWindow;
     private bool selecting, finishing, quitAfterStop, hasFirstFrame;
+    private bool activeSystemAudio;
+    private string activeMicrophone = "Muted";
+    internal bool IsSaving => finishing;
+    internal bool IsBusy => IsRecording || IsSaving;
+    internal string SavingStatus { get; private set; } = "Saving recording...";
+    internal bool EffectiveSystemAudio => IsBusy ? activeSystemAudio : Settings.SystemAudio;
+    internal string EffectiveMicrophone => IsBusy ? activeMicrophone : Settings.Microphone == "none" ? "Muted" : Settings.Microphone == "system_default" ? "System Default" : "Selected microphone";
     internal bool IsRecording => recorder != null;
     internal string? ActiveRecording => recordingPath;
     internal bool IsPaused => recorder?.Status == RecorderStatus.Paused;
@@ -32,7 +40,7 @@ public partial class App
 
     internal void RequestRecording(CaptureMode mode = CaptureMode.Area)
     {
-        if (IsRecording || selecting || quitAfterStop) return;
+        if (IsBusy || selecting || quitAfterStop) return;
         selecting = true;
         var hidden = Windows.Cast<Window>().Where(w => w.IsVisible && w is not ToastWindow).ToArray();
         if (mode != CaptureMode.Screen) foreach (var window in hidden) window.Hide();
@@ -51,7 +59,7 @@ public partial class App
     }
     internal void StartCapture(CaptureTarget target)
     {
-        if (IsRecording) return;
+        if (IsBusy) return;
         Directory.CreateDirectory(Recordings);
         recordingPath = Path.Combine(Recordings, RecordingFiles.NextName(DateTime.Now, name => File.Exists(Path.Combine(Recordings, name))));
         var size = Luna.Core.Encoding.Size(target.Width, target.Height, target.Scale, target.Mode);
@@ -60,13 +68,18 @@ public partial class App
         var source = target.Source;
         source.OutputSize = new ScreenSize(size.Width, size.Height);
         var audio = new List<AudioSourceBase>();
-        if (Settings.SystemAudio && LoopbackAudioSource.Default is { } output) audio.Add(output);
+        activeSystemAudio = false; activeMicrophone = "Muted";
+        if (Settings.SystemAudio && LoopbackAudioSource.Default is { } output) { audio.Add(output); activeSystemAudio = true; }
         if (Settings.Microphone != "none" && !MicrophoneBlocked())
         {
             var devices = Recorder.GetSystemAudioCaptureDevices();
             var microphone = devices.FirstOrDefault(d => d.DeviceName == Settings.Microphone);
             var input = Settings.Microphone == "system_default" || microphone == null ? CaptureAudioSource.Default : new CaptureAudioSource(microphone.DeviceName);
-            if (input != null) audio.Add(input);
+            if (input != null)
+            {
+                audio.Add(input);
+                activeMicrophone = Settings.Microphone == "system_default" || microphone == null ? devices.FirstOrDefault(d => d.IsDefaultDevice)?.FriendlyName ?? "System Default" : microphone.FriendlyName;
+            }
         }
         var options = new RecorderOptions
         {
@@ -99,12 +112,12 @@ public partial class App
         recorder.OnStatusChanged += (_, args) => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (recorder != current) return;
-            if (args.Status == RecorderStatus.Recording && hasFirstFrame) recordingTime.Start(); else recordingTime.Stop();
+            if (args.Status == RecorderStatus.Recording && hasFirstFrame && !finishing) recordingTime.Start(); else recordingTime.Stop();
             RecordingChanged?.Invoke(); UpdateBar(); RefreshTray();
         }));
         recordingTime.Reset(); finishing = false;
         recordingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-        recordingTimer.Tick += (_, _) => { if (targetWindow != IntPtr.Zero && !Native.IsWindow(targetWindow)) StopRecording(); RecordingChanged?.Invoke(); bar?.UpdateTime(); if (tray != null) tray.Text = "Luna: recording " + RecordingTime; };
+        recordingTimer.Tick += (_, _) => { if (targetWindow != IntPtr.Zero && !Native.IsWindow(targetWindow)) StopRecording(); RecordingChanged?.Invoke(); bar?.UpdateTime(); RefreshTrayStatus(); };
         recordingTimer.Start();
         try
         {
@@ -125,7 +138,13 @@ public partial class App
         if (blocked) new ToastWindow("Microphone blocked by Windows privacy settings", null, () => Process.Start(new ProcessStartInfo("ms-settings:privacy-microphone") { UseShellExecute = true }), "Fix").Show();
         return blocked;
     }
-    internal void StopRecording() { if (recorder == null || finishing) return; finishing = true; recordingTime.Stop(); recorder.Stop(); bar?.Refresh(); }
+    internal void StopRecording()
+    {
+        if (recorder == null || finishing) return;
+        finishing = true; SavingStatus = "Saving recording..."; recordingTime.Stop();
+        RecordingChanged?.Invoke(); UpdateBar(); RefreshTray();
+        recorder.Stop();
+    }
     internal void PauseRecording()
     {
         if (recorder == null || finishing) return;
@@ -136,40 +155,65 @@ public partial class App
     {
         if (recorder == null) return;
         recordingTimer?.Stop(); recordingTimer = null; recordingTime.Stop(); targetWindow = IntPtr.Zero;
-        var ownedOutput = recordingStream != null;
-        var old = recorder; recorder = null; finishing = false;
-        try { old.Dispose(); }
-        finally { recordingStream?.Dispose(); recordingStream = null; }
+        var stream = recordingStream; var ownedOutput = stream != null;
+        var old = recorder; recorder = null; recordingStream = null; finishing = true;
+        var environment = recordingEnvironment; var recordedFrame = hasFirstFrame;
         path = string.IsNullOrEmpty(path) ? recordingPath : path;
-        recordingPath = null; RecordingChanged?.Invoke(); UpdateBar(); RefreshTray();
+        SavingStatus = "Saving recording...";
+        RecordingChanged?.Invoke(); UpdateBar(); RefreshTray();
         try
         {
-            if (path == null || !File.Exists(path) || new FileInfo(path).Length == 0 || !hasFirstFrame)
+            await Task.Run(() => { try { old.Dispose(); } finally { stream?.Dispose(); } });
+            if (path == null || !File.Exists(path) || new FileInfo(path).Length == 0 || !recordedFrame)
             {
                 var reason = error ?? "Stopped before any video was recorded. Try a longer recording.";
                 if (path != null && ownedOutput)
                 {
                     try { await RecordingFiles.DiscardUnrecordedAsync(path); }
-                    catch (IOException ex) { Log(ex.ToString()); reason += " The unfinished file could not be removed."; }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Log(ex.ToString()); reason += " The unfinished file could not be removed."; }
                 }
                 ShowNotice("Recording failed: " + reason);
             }
             else
             {
-                try { Mp4FastStart.Apply(path); }
-                catch (IOException ex) { Log(ex.ToString()); ShowNotice("Recording saved; MP4 index optimization failed: " + ex.Message); }
-                var prompt = Prompt.Write(path, recordingEnvironment);
-                if (Settings.AutoCopyForLlms) await ClipboardService.Text(prompt);
                 var saved = path;
-                new ToastWindow(Settings.AutoCopyForLlms ? "Clipboard updated" : "Recording saved", Settings.AutoCopyForLlms ? "Path and context copied (Ctrl+V)" : "Saved to your library", () => OpenLibrary(saved)).Show();
+                var progress = new Progress<double>(value =>
+                {
+                    if (!finishing) return;
+                    SavingStatus = $"Saving recording: optimizing MP4 {value:P0}";
+                    RecordingChanged?.Invoke(); bar?.UpdateTime(); RefreshTrayStatus();
+                });
+                string? warning = null;
+                try { await Task.Run(() => Mp4FastStart.Apply(saved, progress)); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OverflowException)
+                {
+                    Log(ex.ToString()); warning = "MP4 index optimization failed; original video kept. Faststart is not guaranteed.";
+                }
+                SavingStatus = "Saving context..."; RecordingChanged?.Invoke(); bar?.UpdateTime(); RefreshTrayStatus();
+                string? prompt = null;
+                try { prompt = await Task.Run(() => Prompt.Write(saved, environment)); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Log(ex.ToString()); warning = (warning == null ? "" : warning + " ") + "Context could not be saved: " + ex.Message; }
+                var copied = false;
+                if (Settings.AutoCopyForLlms && prompt != null)
+                {
+                    try { await ClipboardService.Text(prompt); copied = true; }
+                    catch (System.Runtime.InteropServices.COMException ex) { Log(ex.ToString()); warning = (warning == null ? "" : warning + " ") + "Clipboard is busy. Copy again from Library."; }
+                }
+                new ToastWindow(copied ? "Clipboard updated" : "Recording saved", copied ? "Path and context copied (Ctrl+V)" : "Saved to your library", () => OpenLibrary(saved)).Show();
+                if (warning != null) ShowNotice(warning);
                 if (error != null) ShowNotice("Recording ended: " + error + ". Saved what was recorded.");
-                if (Settings.AutoDelete) CleanUp();
+                if (Settings.AutoDelete) await Task.Run(() => CleanUp());
             }
         }
-        catch (Exception ex) { ShowNotice("Recording saved; context or clipboard failed: " + ex.Message); }
-        if (quitAfterStop) Shutdown();
+        catch (Exception ex) { Log(ex.ToString()); ShowNotice("Recording finalization failed. Check the recording in Library: " + ex.Message); }
+        finally
+        {
+            recordingPath = null; finishing = false;
+            RecordingChanged?.Invoke(); UpdateBar(); RefreshTray();
+            if (quitAfterStop) Shutdown();
+        }
     }
-    internal void Quit() { if (IsRecording) { quitAfterStop = true; StopRecording(); } else Shutdown(); }
+    internal void Quit() { if (IsBusy) { quitAfterStop = true; StopRecording(); } else Shutdown(); }
     internal void ToggleBar() { Settings.FloatingBar = !Settings.FloatingBar; Save(); UpdateBar(); }
     private void UpdateBar()
     {

@@ -20,6 +20,9 @@ public partial class App : Application
     private RegisteredWaitHandle? activationWait;
     private HwndSource? messages;
     private Forms.NotifyIcon? tray;
+    private Forms.ToolStripItem? trayState;
+    private Icon? trayIcon;
+    private string? trayIconState;
     private Window? library;
     private readonly Dictionary<int, string> hotkeys = new();
     internal Settings Settings { get; private set; } = new();
@@ -48,7 +51,7 @@ public partial class App : Application
             catch (FormatException) { ShowNotice("Invalid shortcut: " + combo); }
             id++;
         }
-        tray = new Forms.NotifyIcon { Icon = CreateTrayIcon(), Text = "Luna", Visible = true };
+        tray = new Forms.NotifyIcon { Text = "Luna", Visible = true };
         tray.MouseClick += (_, args) => { if (args.Button == Forms.MouseButtons.Left) OpenLibrary(); };
         RefreshTray(); UpdateBar();
         if (!Settings.OnboardingCompleted) ShowWelcome();
@@ -58,18 +61,33 @@ public partial class App : Application
         if (msg == 0x312 && hotkeys.TryGetValue(w.ToInt32(), out var action)) { handled = true; if (action == "library") OpenLibrary(); else if (action == "area") RequestRecording(CaptureMode.Area); else if (action == "picker") RequestRecording(CaptureMode.Window); else if (action == "fullScreen") RequestRecording(CaptureMode.Screen); else if (action == "stop") StopRecording(); else if (action == "pause") PauseRecording(); else if (action == "floatingBar") ToggleBar(); }
         return IntPtr.Zero;
     }
-    private static Icon CreateTrayIcon()
+    private static Icon CreateTrayIcon(string state)
     {
-        using var bitmap = new Bitmap(32, 32); using (var g = Graphics.FromImage(bitmap)) { g.Clear(System.Drawing.Color.Transparent); g.FillEllipse(Brushes.White, 2, 2, 28, 28); g.FillEllipse(Brushes.DarkSlateBlue, 5, 5, 22, 22); g.FillEllipse(Brushes.White, 11, 11, 10, 10); }
-        return Icon.FromHandle(bitmap.GetHicon());
+        using var bitmap = new Bitmap(32, 32); using (var g = Graphics.FromImage(bitmap)) { g.Clear(System.Drawing.Color.Transparent); g.FillEllipse(Brushes.White, 2, 2, 28, 28); g.FillEllipse(state == "recording" ? Brushes.Red : state is "paused" or "saving" ? Brushes.DarkOrange : Brushes.DarkSlateBlue, 5, 5, 22, 22); g.FillEllipse(Brushes.White, 11, 11, 10, 10); }
+        var handle = bitmap.GetHicon();
+        try { using var icon = Icon.FromHandle(handle); return (Icon)icon.Clone(); }
+        finally { Native.DestroyIcon(handle); }
+    }
+    private void RefreshTrayStatus()
+    {
+        if (tray == null) return;
+        var state = IsSaving ? "saving" : IsRecording ? IsPaused ? "paused" : "recording" : "idle";
+        tray.Text = IsSaving ? "Luna: saving" : IsRecording ? "Luna: " + state + " " + RecordingTime : "Luna";
+        if (trayState != null) trayState.Text = IsSaving ? SavingStatus : (IsPaused ? "Paused (" : "Recording (") + RecordingTime + ")";
+        if (trayIconState != state)
+        {
+            var old = trayIcon; trayIcon = CreateTrayIcon(state); tray.Icon = trayIcon; trayIconState = state; old?.Dispose();
+        }
     }
     private void RefreshTray()
     {
         if (tray == null) return;
         var menu = new Forms.ContextMenuStrip();
-        if (IsRecording)
+        trayState = null;
+        if (IsSaving) { trayState = menu.Items.Add(SavingStatus); trayState.Enabled = false; }
+        else if (IsRecording)
         {
-            menu.Items.Add((IsPaused ? "Paused (" : "Recording (") + RecordingTime + ")").Enabled = false;
+            trayState = menu.Items.Add((IsPaused ? "Paused (" : "Recording (") + RecordingTime + ")"); trayState.Enabled = false;
             menu.Items.Add(IsPaused ? "Resume Recording" : "Pause Recording", null, (_, _) => PauseRecording());
             menu.Items.Add("Stop Recording", null, (_, _) => StopRecording());
         }
@@ -80,9 +98,9 @@ public partial class App : Application
             menu.Items.Add("Choose Window or Screen...", null, (_, _) => RequestRecording(CaptureMode.Window));
         }
         menu.Items.Add("Floating Recorder Bar", null, (_, _) => ToggleBar());
-        var systemAudio = new Forms.ToolStripMenuItem("Record System Audio") { Checked = Settings.SystemAudio, Enabled = !IsRecording };
+        var systemAudio = new Forms.ToolStripMenuItem("Record System Audio") { Checked = EffectiveSystemAudio, Enabled = !IsBusy };
         systemAudio.Click += (_, _) => { Settings.SystemAudio = !Settings.SystemAudio; Save(); }; menu.Items.Add(systemAudio);
-        var mic = new Forms.ToolStripMenuItem("Microphone") { Enabled = !IsRecording };
+        var mic = new Forms.ToolStripMenuItem("Microphone: " + EffectiveMicrophone) { Enabled = !IsBusy };
         foreach (var pair in ScreenRecorderLib.Recorder.GetSystemAudioCaptureDevices().Select(d => (d.FriendlyName, d.DeviceName)).Prepend(("System Default", "system_default")).Append(("Mute / No Audio", "none")))
         { var choice = new Forms.ToolStripMenuItem(pair.Item1) { Checked = Settings.Microphone == pair.Item2 }; choice.Click += (_, _) => { Settings.Microphone = pair.Item2; Save(); }; mic.DropDownItems.Add(choice); }
         menu.Items.Add(mic);
@@ -93,7 +111,9 @@ public partial class App : Application
         menu.Items.Add("Settings...", null, (_, _) => ShowSettings());
         menu.Items.Add("Welcome Guide...", null, (_, _) => ShowWelcome());
         menu.Items.Add("Quit Luna", null, (_, _) => Quit());
+        Native.Exclude(menu);
         var old = tray.ContextMenuStrip; tray.ContextMenuStrip = menu; old?.Dispose();
+        RefreshTrayStatus();
     }
     internal void CleanUp(int? days = null)
     {
@@ -114,6 +134,7 @@ public partial class App : Application
         panel.Children.Add(new TextBlock { Text = "Copies the file path and context. The first line is the path.", TextWrapping = TextWrapping.Wrap });
         var audio = AddToggle(panel, "Record system audio", Settings.SystemAudio, v => Settings.SystemAudio = v);
         var days = new ComboBox { ItemsSource = new[] { 7, 15, 30, 60 }, SelectedItem = Settings.RetentionDays, Margin = new Thickness(0, 12, 0, 12) };
+        Native.Exclude(days);
         var retention = new CheckBox { Content = $"Auto-delete recordings older than {Settings.RetentionDays} days", IsChecked = Settings.AutoDelete };
         days.SelectionChanged += (_, _) => { if (days.SelectedItem is int selected && selected != Settings.RetentionDays) { Settings.RetentionDays = selected; Save(); } };
         retention.Click += (_, _) => { Settings.AutoDelete = retention.IsChecked == true; Save(); }; panel.Children.Add(retention); panel.Children.Add(days);
@@ -169,7 +190,7 @@ public partial class App : Application
     {
         activationWait?.Unregister(null); activation?.Dispose();
         if (messages != null) { foreach (var id in hotkeys.Keys) Native.UnregisterHotKey(messages.Handle, id); messages.Dispose(); }
-        if (tray != null) { tray.Visible = false; tray.Dispose(); }
+        if (tray != null) { tray.Visible = false; tray.Dispose(); } trayIcon?.Dispose();
         instance?.Dispose(); base.OnExit(e);
     }
 }
