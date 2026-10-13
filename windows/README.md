@@ -9,6 +9,8 @@ Install the .NET 10 SDK. From the repository root:
 ```sh
 dotnet test windows/tests/Luna.Core.Tests
 dotnet build windows/src/Luna.App -c Release
+# Windows only: WPF overlay and file-release regression tests
+dotnet test windows/tests/Luna.App.Tests -c Release
 ```
 
 The Core project contains no Windows APIs and its tests run on Linux and macOS. The WPF app needs Windows 11 (Windows 10 build 19041 is the minimum).
@@ -40,6 +42,8 @@ Unzip the complete `Luna-Windows-x64.zip` into a writable folder and run `Luna.e
 The floating bar and tray expose system audio and microphone choices. With neither audio source enabled, the MP4 still contains a silent AAC track. Stop writes the MP4, `.prompt.md`, and original `.environment.json` context. Auto-copy puts the prompt text on the clipboard; disabling it leaves the clipboard unchanged. The Library supports paused playback, scrubbing/volume, batch copy, Explorer, Recycle Bin deletion and automatic retention. Existing prompts can be copied for legacy clips; missing prompts require original environment metadata and never invent recording context.
 
 This quick version uses pinned ScreenRecorderLib7.0.1 with H.264 High at30fps, faststart, and unconstrained VBR. The issue's bitrate formula configures average bitrate, not a strict cap. Keyframes use the encoder default; a one-second interval is not guaranteed. The user accepted lower recording quality to get a working Windows version now. These deviations remain visible for later issue acceptance; no upstream extension is required to run this build.
+
+Stopping before the encoder has produced a frame cancels the take, removes the empty file, and shows a recording failure notice. Area selection tolerates horizontal and vertical movement before the drag has both dimensions.
 
 The Library currently shows file/date/size rows rather than per-clip thumbnail and duration badges; its Fullscreen button maximizes the Library. Mixed-DPI geometry, all audio combinations/privacy settings, Windows N, Gemini upload and clean Windows Sandbox need the manual checks below. Local synthetic own-window capture is evidence for actual video/stop/clipboard behavior, not proof of every real-monitor acceptance item. The app makes no network calls.
 

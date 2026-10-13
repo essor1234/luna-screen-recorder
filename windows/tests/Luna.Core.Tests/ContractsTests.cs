@@ -268,4 +268,19 @@ public sealed class ContractsTests
         Assert.Equal(screen, AreaGesture.IsScreen(width, height));
         Assert.Equal(retry, AreaGesture.MustRetry(width, height));
     }
+    [Fact]
+    public async Task DiscardUnrecordedRemovesEmptyFileAndToleratesMissingFile()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString()); Directory.CreateDirectory(directory);
+        var take = Path.Combine(directory, "Recording_startup.mp4");
+        try
+        {
+            File.WriteAllBytes(take, []);
+            await RecordingFiles.DiscardUnrecordedAsync(take);
+            Assert.False(File.Exists(take));
+            await RecordingFiles.DiscardUnrecordedAsync(take);
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
 }

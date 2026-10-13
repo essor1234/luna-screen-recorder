@@ -70,6 +70,15 @@ public static class RecordingFiles
         while (exists(candidate)) candidate = stem + "_" + (suffix++) + ".mp4";
         return candidate;
     }
+    public static async Task DiscardUnrecordedAsync(string path)
+    {
+        // A watcher may briefly hold a take after the encoder releases its output handle.
+        for (var attempt = 0; ; attempt++)
+        {
+            try { File.Delete(path); return; }
+            catch (IOException) when (attempt < 9) { await Task.Delay(50); }
+        }
+    }
     public static bool IsOwned(string path) => Path.GetFileName(path).StartsWith("Recording_", StringComparison.Ordinal) && Path.GetExtension(path).Equals(".mp4", StringComparison.OrdinalIgnoreCase);
     public static string MetadataPath(string mp4) => Path.ChangeExtension(mp4, ".environment.json");
     public static IEnumerable<string> Sidecars(string mp4)

@@ -26,7 +26,7 @@ internal sealed class AreaOverlay : Window
     private bool dragging;
     private readonly Action<CaptureTarget?> finish;
     private double Scale => Native.ScaleAt(screen.Bounds.Left, screen.Bounds.Top);
-    private AreaOverlay(Forms.Screen screen, Action<CaptureTarget?> finish)
+    internal AreaOverlay(Forms.Screen screen, Action<CaptureTarget?> finish)
     {
         this.screen = screen; this.finish = finish;
         WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent; ShowInTaskbar = false; Topmost = true; Cursor = Cursors.Cross; ResizeMode = ResizeMode.NoResize;
@@ -54,13 +54,14 @@ internal sealed class AreaOverlay : Window
         var end = Forms.Cursor.Position; var b = screen.Bounds;
         return System.Drawing.Rectangle.FromLTRB(Math.Clamp(Math.Min(start.X, end.X), b.Left, b.Right), Math.Clamp(Math.Min(start.Y, end.Y), b.Top, b.Bottom), Math.Clamp(Math.Max(start.X, end.X), b.Left, b.Right), Math.Clamp(Math.Max(start.Y, end.Y), b.Top, b.Bottom));
     }
-    private void Draw(System.Drawing.Rectangle selection)
+    internal void Draw(System.Drawing.Rectangle selection)
     {
         var hole = new Rect((selection.Left - screen.Bounds.Left) / Scale, (selection.Top - screen.Bounds.Top) / Scale, selection.Width / Scale, selection.Height / Scale);
         var whole = new RectangleGeometry(new Rect(0, 0, Width, Height));
-        shade.Data = selection.IsEmpty ? whole : new CombinedGeometry(GeometryCombineMode.Exclude, whole, new RectangleGeometry(hole));
+        var hasArea = selection.Width > 0 && selection.Height > 0;
+        shade.Data = !hasArea ? whole : new CombinedGeometry(GeometryCombineMode.Exclude, whole, new RectangleGeometry(hole));
         stroke.Width = hole.Width; stroke.Height = hole.Height; Canvas.SetLeft(stroke, hole.Left); Canvas.SetTop(stroke, hole.Top);
-        if (selection.IsEmpty) size.Text = "";
+        if (!hasArea) size.Text = "";
         else { var output = Luna.Core.Encoding.Size(selection.Width, selection.Height, Scale, CaptureMode.Area); size.Text = $"{output.Width} × {output.Height}"; Canvas.SetLeft(size, hole.Left); Canvas.SetTop(size, hole.Bottom + 24 > Height ? hole.Top - 24 : hole.Bottom + 4); }
     }
     internal static CaptureTarget? Choose()

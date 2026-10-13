@@ -16,6 +16,7 @@ namespace Luna.App;
 public partial class App
 {
     private Recorder? recorder;
+    private FileStream? recordingStream;
     private FloatingBar? bar;
     private readonly Stopwatch recordingTime = new();
     private DispatcherTimer? recordingTimer;
@@ -105,7 +106,12 @@ public partial class App
         recordingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         recordingTimer.Tick += (_, _) => { if (targetWindow != IntPtr.Zero && !Native.IsWindow(targetWindow)) StopRecording(); RecordingChanged?.Invoke(); bar?.UpdateTime(); if (tray != null) tray.Text = "Luna: recording " + RecordingTime; };
         recordingTimer.Start();
-        try { recorder.Record(recordingPath); }
+        try
+        {
+            // Own the output handle so an early stop can close and remove an empty take.
+            recordingStream = new FileStream(recordingPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read);
+            recorder.Record(recordingStream);
+        }
         catch (Exception ex) { CompleteRecording(recordingPath, ex.Message); }
         RecordingChanged?.Invoke(); UpdateBar(); RefreshTray();
     }
@@ -130,15 +136,23 @@ public partial class App
     {
         if (recorder == null) return;
         recordingTimer?.Stop(); recordingTimer = null; recordingTime.Stop(); targetWindow = IntPtr.Zero;
-        var old = recorder; recorder = null; finishing = false; old.Dispose();
+        var ownedOutput = recordingStream != null;
+        var old = recorder; recorder = null; finishing = false;
+        try { old.Dispose(); }
+        finally { recordingStream?.Dispose(); recordingStream = null; }
         path = string.IsNullOrEmpty(path) ? recordingPath : path;
         recordingPath = null; RecordingChanged?.Invoke(); UpdateBar(); RefreshTray();
         try
         {
             if (path == null || !File.Exists(path) || new FileInfo(path).Length == 0 || !hasFirstFrame)
             {
-                if (path != null && File.Exists(path)) File.Delete(path);
-                ShowNotice("Recording failed: " + (error ?? "No video was recorded."));
+                var reason = error ?? "Stopped before any video was recorded. Try a longer recording.";
+                if (path != null && ownedOutput)
+                {
+                    try { await RecordingFiles.DiscardUnrecordedAsync(path); }
+                    catch (IOException ex) { Log(ex.ToString()); reason += " The unfinished file could not be removed."; }
+                }
+                ShowNotice("Recording failed: " + reason);
             }
             else
             {
