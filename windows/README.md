@@ -27,15 +27,21 @@ The script publishes a self-contained x64 application, copies the app-local Visu
 
 The executable is unsigned. Windows SmartScreen may show a warning: inspect the source and artifact, then choose **More info**, **Run anyway** if you trust the build. Windows N editions require the Media Feature Pack.
 
-## Current development status
+## Quick Windows MVP
 
-This is an early development milestone, not a completed Windows recorder. It supplies the portable contracts and behavioral tests, WPF project, app-local packaging workflow, and initial shell, Library, Settings and Welcome screens. ScreenRecorderLib 7.0.1 loads on .NET 10, but does not expose the maximum VBR bitrate or keyframe interval required by issue #1. The selected approach is an upstream 7.x extension followed by an exact released-package pin. Recording integration and capture acceptance await owner confirmation and that compatible release.
+Unzip the complete `Luna-Windows-x64.zip` into a writable folder and run `Luna.exe`. No .NET installation or administrator rights are required. Keep all bundled DLLs beside the executable. Luna opens a first-run guide, then lives in the tray and floating bar. Recordings and context files are saved under the Videos known folder in `ScreenRecordings`; settings are in `%APPDATA%\Luna\settings.json`.
 
-Current Library work includes paused playback, seeking/volume, multiple selection, text/file clipboard formats, Explorer, Recycle Bin deletion and file watching. The final thumbnail/duration presentation, player fullscreen, contextual actions, recording picker, area overlay and floating controls still need completion with recording integration. The Record buttons in this development build cannot begin a take. Do not submit this milestone as the finished acceptance checklist.
+- Ctrl+Alt+1: drag an area; click records that monitor; Esc cancels.
+- Ctrl+Alt+2: select a window or screen, then Record. Windows have a live preview.
+- Ctrl+Alt+3: record the monitor under the cursor.
+- Ctrl+Alt+P: pause/resume; Ctrl+Alt+S: stop and save.
+- Ctrl+Alt+F: toggle the floating bar; Ctrl+Alt+R: Library.
 
-Prompt regeneration uses each clip's owned `.environment.json` sidecar to preserve the original Windows build, logical monitor size and scale. Recording integration must write this metadata with the prompt when a take stops. Imported or older clips without that metadata can still copy an existing prompt, but if their prompt is missing, Luna reports that the original recording environment is unavailable instead of inventing it.
+The floating bar and tray expose system audio and microphone choices. With neither audio source enabled, the MP4 still contains a silent AAC track. Stop writes the MP4, `.prompt.md`, and original `.environment.json` context. Auto-copy puts the prompt text on the clipboard; disabling it leaves the clipboard unchanged. The Library supports paused playback, scrubbing/volume, batch copy, Explorer, Recycle Bin deletion and automatic retention. Existing prompts can be copied for legacy clips; missing prompts require original environment metadata and never invent recording context.
 
-Core tests and a WPF cross-build have been exercised using .NET 10.0.401 on Linux; native .NET 10.0.12 dependency and synthetic UI smoke checks also passed. Native SDK build, macOS tests, real captures, clean Windows Sandbox, GitHub CI, screenshots of the final recorder and a self-recorded demo remain required before submission.
+This quick version uses pinned ScreenRecorderLib7.0.1 with H.264 High at30fps, faststart, and unconstrained VBR. The issue's bitrate formula configures average bitrate, not a strict cap. Keyframes use the encoder default; a one-second interval is not guaranteed. The user accepted lower recording quality to get a working Windows version now. These deviations remain visible for later issue acceptance; no upstream extension is required to run this build.
+
+The Library currently shows file/date/size rows rather than per-clip thumbnail and duration badges; its Fullscreen button maximizes the Library. Mixed-DPI geometry, all audio combinations/privacy settings, Windows N, Gemini upload and clean Windows Sandbox need the manual checks below. Local synthetic own-window capture is evidence for actual video/stop/clipboard behavior, not proof of every real-monitor acceptance item. The app makes no network calls.
 
 ## Before opening a pull request
 

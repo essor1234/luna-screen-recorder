@@ -22,6 +22,9 @@ internal sealed class LibraryWindow : Window
     private readonly TextBlock details = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock count = new();
     private readonly TextBlock notice = new();
+    private readonly StackPanel live = new() { Orientation = Orientation.Horizontal };
+    private readonly TextBlock liveText = new();
+    private readonly Button livePause = new();
     private readonly Button storage = new();
     private readonly StackPanel pane = new() { Margin = new Thickness(16, 0, 0, 0) };
     private readonly StackPanel empty = new() { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
@@ -39,8 +42,22 @@ internal sealed class LibraryWindow : Window
         header.Children.Add(new TextBlock { Text = "Recordings", FontSize = 26, Margin = new Thickness(0, 0, 18, 16) }); header.Children.Add(count);
         var record = new Button { Content = "Record ▾", Padding = new Thickness(14, 6, 14, 6), Margin = new Thickness(24, 0, 0, 16) }; header.Children.Add(record);
         var menu = new ContextMenu();
-        foreach (var mode in Enum.GetValues<CaptureMode>()) { var item = new MenuItem { Header = mode == CaptureMode.Area ? "Record Area" : mode == CaptureMode.Window ? "Choose Window or Screen" : "Record Full Screen" }; item.Click += (_, _) => app.RequestRecording(); menu.Items.Add(item); }
-        record.Click += (_, _) => { menu.PlacementTarget = record; menu.IsOpen = true; };
+        foreach (var mode in Enum.GetValues<CaptureMode>()) { var item = new MenuItem { Header = mode == CaptureMode.Area ? "Record Area" : mode == CaptureMode.Window ? "Choose Window or Screen" : "Record Full Screen" }; item.Click += (_, _) => app.RequestRecording(mode); menu.Items.Add(item); }
+        var systemAudio = new MenuItem { Header = "Record System Audio", IsCheckable = true, IsChecked = app.Settings.SystemAudio };
+        systemAudio.Click += (_, _) => { app.Settings.SystemAudio = systemAudio.IsChecked; app.Save(); }; menu.Items.Add(systemAudio);
+        var mic = new MenuItem { Header = "Microphone" }; mic.SubmenuOpened += (_, _) => { mic.Items.Clear(); foreach (var item in FloatingBar.MicrophoneMenu(app).Items.Cast<MenuItem>().ToArray()) { var copyItem = new MenuItem { Header = item.Header, IsChecked = item.IsChecked, IsEnabled = item.IsEnabled }; copyItem.Click += (_, _) => item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent)); mic.Items.Add(copyItem); } }; menu.Items.Add(mic);
+        var settings = new MenuItem { Header = "Settings..." }; settings.Click += (_, _) => app.ShowSettings(); menu.Items.Add(settings);
+        record.Click += (_, _) => { systemAudio.IsChecked = app.Settings.SystemAudio; menu.PlacementTarget = record; menu.IsOpen = true; };
+        DockPanel.SetDock(live, Dock.Top); root.Children.Add(live); live.Children.Add(liveText);
+        livePause.Click += (_, _) => app.PauseRecording(); live.Children.Add(livePause);
+        var stop = new Button { Content = "Stop", Margin = new Thickness(12, 0, 0, 8) }; stop.Click += (_, _) => app.StopRecording(); live.Children.Add(stop);
+        void UpdateRecording()
+        {
+            live.Visibility = app.IsRecording ? Visibility.Visible : Visibility.Collapsed; record.IsEnabled = !app.IsRecording;
+            liveText.Text = (app.IsPaused ? "PAUSED " : "REC ") + app.RecordingTime + " • System audio " + (app.Settings.SystemAudio ? "On" : "Off") + " • Mic " + (app.Settings.Microphone == "none" ? "Muted" : "On") + "   ";
+            livePause.Content = app.IsPaused ? "Resume" : "Pause";
+        }
+        app.RecordingChanged += UpdateRecording; Closed += (_, _) => app.RecordingChanged -= UpdateRecording; UpdateRecording();
         var footer = new StackPanel { Orientation = Orientation.Horizontal }; DockPanel.SetDock(footer, Dock.Bottom); root.Children.Add(footer);
         RefreshRetentionLabel(); storage.Click += (_, _) => { new StorageWindow(app) { Owner = this }.ShowDialog(); }; footer.Children.Add(storage);
         var folder = new Button { Content = "Open folder", Margin = new Thickness(12, 0, 12, 0) }; folder.Click += (_, _) => app.OpenFolder(); footer.Children.Add(folder); footer.Children.Add(notice);
@@ -72,7 +89,7 @@ internal sealed class LibraryWindow : Window
     private void Reload()
     {
         var selected = Selected().ToHashSet(StringComparer.OrdinalIgnoreCase);
-        try { list.ItemsSource = Directory.EnumerateFiles(app.Recordings, "Recording_*.mp4").Select(path => new FileInfo(path)).Where(f => f.Length > 0).OrderByDescending(f => f.LastWriteTimeUtc).Select(f => new RecordingRow(f.FullName, f.LastWriteTime, f.Length)).ToArray(); foreach (var clip in list.Items.Cast<RecordingRow>()) if (selected.Contains(clip.Path)) list.SelectedItems.Add(clip); count.Text = $"{list.Items.Count} recordings"; if (list.Items.Count == 0) details.Text = "No recordings yet\nPress Ctrl+Alt+1, Ctrl+Alt+2 or Ctrl+Alt+3 to record."; }
+        try { list.ItemsSource = Directory.EnumerateFiles(app.Recordings, "Recording_*.mp4").Select(path => new FileInfo(path)).Where(f => f.Length > 0 && !string.Equals(f.FullName, app.ActiveRecording, StringComparison.OrdinalIgnoreCase)).OrderByDescending(f => f.LastWriteTimeUtc).Select(f => new RecordingRow(f.FullName, f.LastWriteTime, f.Length)).ToArray(); foreach (var clip in list.Items.Cast<RecordingRow>()) if (selected.Contains(clip.Path)) list.SelectedItems.Add(clip); count.Text = $"{list.Items.Count} recordings"; if (list.Items.Count == 0) details.Text = "No recordings yet\nPress Ctrl+Alt+1, Ctrl+Alt+2 or Ctrl+Alt+3 to record."; }
         catch (IOException ex) { notice.Text = ex.Message; }
     }
     private void Select()
@@ -90,6 +107,10 @@ internal sealed class LibraryWindow : Window
         else if (n == 0) details.Text = "No recordings yet\nPress Ctrl+Alt+1, Ctrl+Alt+2 or Ctrl+Alt+3 to record.";
     }
     private void Release() { player.Stop(); player.Close(); player.Source = null; playing = false; scrub.Value = 0; }
+    internal void SelectPath(string path)
+    {
+        Reload(); foreach (var item in list.Items.Cast<RecordingRow>()) if (string.Equals(item.Path, path, StringComparison.OrdinalIgnoreCase)) { list.SelectedItem = item; list.ScrollIntoView(item); break; }
+    }
     internal void RefreshRetentionLabel() => storage.Content = app.Settings.AutoDelete ? $"{app.Settings.RetentionDays}-Day Auto-Delete" : "Auto-Delete Off";
     private void Delete()
     {

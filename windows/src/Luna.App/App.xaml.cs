@@ -15,7 +15,6 @@ namespace Luna.App;
 
 public partial class App : Application
 {
-    internal void RequestRecording() => ShowNotice("Recording is not available in this development build.");
     private Mutex? instance;
     private EventWaitHandle? activation;
     private RegisteredWaitHandle? activationWait;
@@ -51,12 +50,12 @@ public partial class App : Application
         }
         tray = new Forms.NotifyIcon { Icon = CreateTrayIcon(), Text = "Luna", Visible = true };
         tray.MouseClick += (_, args) => { if (args.Button == Forms.MouseButtons.Left) OpenLibrary(); };
-        RefreshTray();
+        RefreshTray(); UpdateBar();
         if (!Settings.OnboardingCompleted) ShowWelcome();
     }
     private IntPtr Receive(IntPtr hwnd, int msg, IntPtr w, IntPtr l, ref bool handled)
     {
-        if (msg == 0x312 && hotkeys.TryGetValue(w.ToInt32(), out var action)) { handled = true; if (action == "library") OpenLibrary(); else if (action is "area" or "picker" or "fullScreen") RequestRecording(); }
+        if (msg == 0x312 && hotkeys.TryGetValue(w.ToInt32(), out var action)) { handled = true; if (action == "library") OpenLibrary(); else if (action == "area") RequestRecording(CaptureMode.Area); else if (action == "picker") RequestRecording(CaptureMode.Window); else if (action == "fullScreen") RequestRecording(CaptureMode.Screen); else if (action == "stop") StopRecording(); else if (action == "pause") PauseRecording(); else if (action == "floatingBar") ToggleBar(); }
         return IntPtr.Zero;
     }
     private static Icon CreateTrayIcon()
@@ -68,18 +67,37 @@ public partial class App : Application
     {
         if (tray == null) return;
         var menu = new Forms.ContextMenuStrip();
+        if (IsRecording)
+        {
+            menu.Items.Add((IsPaused ? "Paused (" : "Recording (") + RecordingTime + ")").Enabled = false;
+            menu.Items.Add(IsPaused ? "Resume Recording" : "Pause Recording", null, (_, _) => PauseRecording());
+            menu.Items.Add("Stop Recording", null, (_, _) => StopRecording());
+        }
+        else
+        {
+            menu.Items.Add("Record Area...", null, (_, _) => RequestRecording(CaptureMode.Area));
+            menu.Items.Add("Record Full Screen", null, (_, _) => RequestRecording(CaptureMode.Screen));
+            menu.Items.Add("Choose Window or Screen...", null, (_, _) => RequestRecording(CaptureMode.Window));
+        }
+        menu.Items.Add("Floating Recorder Bar", null, (_, _) => ToggleBar());
+        var systemAudio = new Forms.ToolStripMenuItem("Record System Audio") { Checked = Settings.SystemAudio, Enabled = !IsRecording };
+        systemAudio.Click += (_, _) => { Settings.SystemAudio = !Settings.SystemAudio; Save(); }; menu.Items.Add(systemAudio);
+        var mic = new Forms.ToolStripMenuItem("Microphone") { Enabled = !IsRecording };
+        foreach (var pair in ScreenRecorderLib.Recorder.GetSystemAudioCaptureDevices().Select(d => (d.FriendlyName, d.DeviceName)).Prepend(("System Default", "system_default")).Append(("Mute / No Audio", "none")))
+        { var choice = new Forms.ToolStripMenuItem(pair.Item1) { Checked = Settings.Microphone == pair.Item2 }; choice.Click += (_, _) => { Settings.Microphone = pair.Item2; Save(); }; mic.DropDownItems.Add(choice); }
+        menu.Items.Add(mic);
         menu.Items.Add("Open Library", null, (_, _) => OpenLibrary());
         menu.Items.Add("Open Recordings Folder", null, (_, _) => OpenFolder());
         menu.Items.Add($"Auto-Delete Old Recordings ({Settings.RetentionDays} Days)", null, (_, _) => { Settings.AutoDelete = !Settings.AutoDelete; Save(); });
         menu.Items.Add("Auto-Copy for LLMs on Stop", null, (_, _) => { Settings.AutoCopyForLlms = !Settings.AutoCopyForLlms; Save(); });
         menu.Items.Add("Settings...", null, (_, _) => ShowSettings());
         menu.Items.Add("Welcome Guide...", null, (_, _) => ShowWelcome());
-        menu.Items.Add("Quit Luna", null, (_, _) => Shutdown());
+        menu.Items.Add("Quit Luna", null, (_, _) => Quit());
         var old = tray.ContextMenuStrip; tray.ContextMenuStrip = menu; old?.Dispose();
     }
     internal void CleanUp(int? days = null)
     {
-        foreach (var path in Retention.Clean(Recordings, DateTimeOffset.Now, days ?? Settings.RetentionDays, probeDirectory: Native.EnsureDirectoryDeletable).Skipped) Log("Retention skipped " + path);
+        foreach (var path in Retention.Clean(Recordings, DateTimeOffset.Now, days ?? Settings.RetentionDays, recordingPath, probeDirectory: Native.EnsureDirectoryDeletable).Skipped) Log("Retention skipped " + path);
     }
     internal void Save() { try { store?.Save(Settings); if (library is LibraryWindow window) window.RefreshRetentionLabel(); RefreshTray(); SettingsSaved?.Invoke(); } catch (Exception ex) { Log(ex.Message); ShowNotice("Settings could not be saved: " + ex.Message); } }
     internal void OpenFolder() => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Recordings) { UseShellExecute = true });

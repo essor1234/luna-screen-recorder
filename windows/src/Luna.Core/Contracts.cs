@@ -192,3 +192,9 @@ public readonly record struct Hotkey(uint Modifiers, uint Key)
         return new(modifiers, key[0]);
     }
 }
+
+public static class AreaGesture
+{
+    public static bool IsScreen(double width, double height) => width < 15 && height < 15;
+    public static bool MustRetry(double width, double height) => !IsScreen(width, height) && (width < 20 || height < 20);
+}

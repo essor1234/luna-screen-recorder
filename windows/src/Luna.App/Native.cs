@@ -7,7 +7,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Luna.App;
 
-internal static class Native
+internal static partial class Native
 {
     [StructLayout(LayoutKind.Sequential)] private struct Point { public int X, Y; }
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(Point point, uint flags);

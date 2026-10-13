@@ -257,4 +257,15 @@ public sealed class ContractsTests
         try { var path = Path.Combine(directory, "settings.json"); File.WriteAllText(path, "{"); var store = new SettingsStore(path); var result = store.Load(); Assert.True(result.Recovered); Assert.True(File.Exists(path + ".bad")); result.Settings.RetentionDays = 7; store.Save(result.Settings); Assert.Equal(7, store.Load().Settings.RetentionDays); }
         finally { Directory.Delete(directory, true); }
     }
+    [Theory]
+    [InlineData(3, 4, true, false)]
+    [InlineData(14, 14, true, false)]
+    [InlineData(15, 14, false, true)]
+    [InlineData(20, 19, false, true)]
+    [InlineData(20, 20, false, false)]
+    public void AreaGestureThresholds(int width, int height, bool screen, bool retry)
+    {
+        Assert.Equal(screen, AreaGesture.IsScreen(width, height));
+        Assert.Equal(retry, AreaGesture.MustRetry(width, height));
+    }
 }
