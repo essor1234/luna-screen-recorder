@@ -156,6 +156,8 @@ public partial class App
             }
             else
             {
+                try { Mp4FastStart.Apply(path); }
+                catch (IOException ex) { Log(ex.ToString()); ShowNotice("Recording saved; MP4 index optimization failed: " + ex.Message); }
                 var prompt = Prompt.Write(path, recordingEnvironment);
                 if (Settings.AutoCopyForLlms) await ClipboardService.Text(prompt);
                 var saved = path;
