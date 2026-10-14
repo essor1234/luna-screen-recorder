@@ -187,7 +187,7 @@ public partial class App
                 });
                 string? warning = null;
                 try { await Task.Run(() => Mp4FastStart.Apply(saved, progress)); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OverflowException)
+                catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or OverflowException)
                 {
                     Log(ex.ToString()); warning = "MP4 index optimization failed; original video kept. Faststart is not guaranteed.";
                 }

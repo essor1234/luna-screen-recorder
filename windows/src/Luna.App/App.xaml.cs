@@ -190,7 +190,8 @@ public partial class App : Application
     {
         activationWait?.Unregister(null); activation?.Dispose();
         if (messages != null) { foreach (var id in hotkeys.Keys) Native.UnregisterHotKey(messages.Handle, id); messages.Dispose(); }
-        if (tray != null) { tray.Visible = false; tray.Dispose(); } trayIcon?.Dispose();
+        if (tray != null) { tray.Visible = false; tray.Dispose(); }
+        trayIcon?.Dispose();
         instance?.Dispose(); base.OnExit(e);
     }
 }
