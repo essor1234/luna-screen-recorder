@@ -1,6 +1,6 @@
 # Luna for Windows
 
-Windows implementation of [issue #1](https://github.com/nimitbhargava/luna-screen-recorder/issues/1). The macOS application is unchanged.
+Windows preview for [issue #1](https://github.com/nimitbhargava/luna-screen-recorder/issues/1). The macOS application is unchanged.
 
 ## Build and test
 
@@ -9,11 +9,11 @@ Install the .NET 10 SDK. From the repository root:
 ```sh
 dotnet test windows/tests/Luna.Core.Tests
 dotnet build windows/src/Luna.App -c Release
-# Windows only: WPF overlay and file-release regression tests
+# Windows only: WPF, file-release and recording-recovery regression tests
 dotnet test windows/tests/Luna.App.Tests -c Release
 ```
 
-The Core project contains no Windows APIs and its tests run on Linux and macOS. The WPF app needs Windows 11 (Windows 10 build 19041 is the minimum).
+The Core project contains no Windows APIs and its tests run on Linux and macOS. The WPF app targets x64 Windows 10 build 19041 or later. Native preview evidence below is from Windows 11; Windows 10 remains unverified.
 
 The exe icon is generated from `assets/luna_mascot.png`. Regenerate it on Windows with `powershell -File windows/generate-icon.ps1`; do not edit the ICO by hand.
 
@@ -39,9 +39,9 @@ Unzip the complete `Luna-Windows-x64.zip` into a writable folder and run `Luna.e
 - Ctrl+Alt+P: pause/resume; Ctrl+Alt+S: stop and save.
 - Ctrl+Alt+F: toggle the floating bar; Ctrl+Alt+R: Library.
 
-The floating bar and tray expose system audio and microphone choices. With neither audio source enabled, the MP4 still contains a silent AAC track. Stop writes the MP4, `.prompt.md`, and original `.environment.json` context. Auto-copy puts the prompt text on the clipboard; disabling it leaves the clipboard unchanged. The Library supports paused playback, scrubbing/volume, batch copy, Explorer, Recycle Bin deletion and automatic retention. Existing prompts can be copied for legacy clips; missing prompts require original environment metadata and never invent recording context.
+The floating bar and tray expose system audio and microphone choices. With neither audio source enabled, the MP4 still contains a silent AAC track. Stop writes the MP4, `.prompt.md`, and original `.environment.json` context. Auto-copy puts the prompt text on the clipboard; disabling it leaves the clipboard unchanged. The Library supports paused playback, scrubbing/volume, batch copy, Explorer and manual deletion to the Recycle Bin. Automatic retention is enabled by default and permanently deletes owned recordings and sidecars older than 15 days; choose 7, 15, 30 or 60 days or disable it in Settings. Existing prompts can be copied for legacy clips. If a prompt is missing, regeneration requires valid original environment metadata; otherwise Library shows `Could not copy` and leaves the clipboard unchanged. Recording context is never invented.
 
-This quick version uses pinned ScreenRecorderLib7.0.1 with H.264 High with a requested 30 fps, faststart, and unconstrained VBR. The native encoder is asked for faststart. If the index is left at the end, a background relocation pass moves it without re-encoding or requiring ffmpeg. Saving progress appears in the bar, tray and Library. Long recordings and slow storage can take more than two seconds; the upstream two-second stop criterion is not fully satisfied. An optimization failure preserves the original MP4 and still attempts context and clipboard delivery, with a warning that faststart is not guaranteed. The issue's bitrate formula configures average bitrate, not a strict cap. Keyframes use the encoder default; a one-second interval is not guaranteed. The user accepted lower recording quality to get a working Windows version now. These deviations remain visible for later issue acceptance; no upstream extension is required to run this build.
+This quick version uses pinned ScreenRecorderLib 7.0.1 with H.264 High with a requested 30 fps, faststart, and unconstrained VBR. The native encoder is asked for faststart. If the index is left at the end, a background relocation pass moves it without re-encoding or requiring ffmpeg. Saving progress appears in the bar, tray and Library. Long recordings and slow storage can take more than two seconds; the upstream two-second stop criterion is not fully satisfied. An optimization failure preserves the original MP4 and still attempts context and clipboard delivery, with a warning that faststart is not guaranteed. The issue's bitrate formula configures average bitrate, not a strict cap. Keyframes use the encoder default; a one-second interval is not guaranteed. The user accepted lower recording quality to get a working Windows version now. These deviations remain visible for later issue acceptance; no upstream extension is required to run this build.
 
 Stopping before the encoder has produced a frame cancels the take, removes the empty file, and shows a recording failure notice. Area selection tolerates horizontal and vertical movement before the drag has both dimensions.
 
@@ -49,7 +49,7 @@ Area and screen sources explicitly use Windows Graphics Capture, as window sourc
 
 The preview uses software H.264 encoding. Hardware encoding intermittently stalled in native finalization and also produced `0xc00d36b5` encoder failures in the accepted baseline on the tested hybrid-GPU machine. Changing only the supported hardware-encoding option to Off completed controlled Area, Window and repeated Screen captures. Software encoding can use more CPU and the measured average frame rate remains below 30 fps. This improves the observed native behavior on this machine; it is not evidence of universal encoder or timing guarantees.
 
-The Library currently shows file/date/size rows rather than per-clip thumbnail and duration badges; its Fullscreen button opens the player across the monitor with playback controls and an Exit fullscreen button; Esc returns to inline playback. Mixed-DPI geometry, all audio combinations/privacy settings, Windows N, Gemini upload and clean Windows Sandbox need the manual checks below. Local synthetic own-window capture is evidence for actual video/stop/clipboard behavior, not proof of every real-monitor acceptance item. The app makes no network calls.
+The Library currently shows file/date/size rows rather than per-clip thumbnail and duration badges; its Fullscreen button opens the player across the monitor with playback controls and an Exit fullscreen button; Esc returns to inline playback. Click highlighting is enabled for Area and Screen capture, but disabled for Window capture. Mixed-DPI geometry, all audio combinations/privacy settings, Windows N, Gemini upload and clean Windows Sandbox need the manual checks below. Local synthetic own-window capture is evidence for actual video/stop/clipboard behavior, not proof of every real-monitor acceptance item. The app makes no network calls.
 
 ## Tested preview and remaining acceptance
 
