@@ -166,11 +166,28 @@ public static class Prompt
         WriteDurable(Path.ChangeExtension(mp4, ".prompt.md"), text);
         return text;
     }
-    private static void WriteDurable(string path, string text)
+    internal static void WriteDurable(string path, string text, Func<string, FileStream>? open = null)
     {
-        using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
-        using var writer = new StreamWriter(stream);
-        writer.Write(text); writer.Flush(); stream.Flush(true);
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var created = false;
+        try
+        {
+            using (var stream = open != null ? open(temporary) : new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                created = true;
+                using var writer = new StreamWriter(stream);
+                writer.Write(text); writer.Flush(); stream.Flush(true);
+            }
+            File.Move(temporary, path, true);
+        }
+        finally
+        {
+            if (created)
+            {
+                try { File.Delete(temporary); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+        }
     }
     public static string LoadOrRegenerate(string mp4)
     {

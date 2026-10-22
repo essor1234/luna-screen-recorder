@@ -21,15 +21,18 @@ public class RecoveryBoundaryTests
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
-    [Fact]
-    public async Task MetadataRefusalsAndOptimizerRefusalStayInsideApplicationRecovery()
+    [Theory]
+    [InlineData("writable")]
+    [InlineData("directory")]
+    [InlineData("readonly")]
+    public async Task MetadataRefusalsAndOptimizerRefusalStayInsideApplicationRecovery(string logMode)
     {
         // WPF permits one Application per process; its shutdown must not affect other tests.
         var assembly = typeof(RecoveryBoundaryTests).Assembly.Location;
         var host = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH")
             ?? Path.GetFullPath(Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "../../..", "dotnet.exe"));
         var start = new ProcessStartInfo(host) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var argument in new[] { "exec", "--runtimeconfig", Path.ChangeExtension(assembly, ".runtimeconfig.json"), assembly, "--recovery-boundaries" }) start.ArgumentList.Add(argument);
+        foreach (var argument in new[] { "exec", "--runtimeconfig", Path.ChangeExtension(assembly, ".runtimeconfig.json"), assembly, "--recovery-boundaries", logMode }) start.ArgumentList.Add(argument);
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEndAsync(); var errors = process.StandardError.ReadToEndAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -40,18 +43,25 @@ public class RecoveryBoundaryTests
 
     public static int Main(string[] args)
     {
-        if (args.Length != 1 || args[0] != "--recovery-boundaries") { Console.Error.WriteLine("Use --recovery-boundaries for the owned native test fixture."); return 2; }
-        try { ExerciseRecoveryBoundaries(); Console.WriteLine("Application recovery boundaries passed."); return 0; }
+        if (args.Length != 2 || args[0] != "--recovery-boundaries") { Console.Error.WriteLine("Use --recovery-boundaries for the owned native test fixture."); return 2; }
+        try { ExerciseRecoveryBoundaries(args[1]); Console.WriteLine("Application recovery boundaries passed."); return 0; }
         catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
     }
 
-    private static void ExerciseRecoveryBoundaries()
+    private static void ExerciseRecoveryBoundaries(string logMode)
     {
         Exception? failure = null;
         var thread = new Thread(() =>
         {
             var directory = Path.Combine(Path.GetTempPath(), "Luna.App.Tests", Guid.NewGuid().ToString());
             Directory.CreateDirectory(directory);
+            App.LogPath = Path.Combine(directory, "luna.log");
+            if (logMode == "directory") Directory.CreateDirectory(App.LogPath);
+            else
+            {
+                File.WriteAllText(App.LogPath, "owned log seed\n");
+                if (logMode == "readonly") File.SetAttributes(App.LogPath, FileAttributes.ReadOnly);
+            }
             var app = new IsolatedApp { ShutdownMode = ShutdownMode.OnExplicitShutdown };
             var unhandled = new List<Exception>();
             app.DispatcherUnhandledException += (_, e) => { unhandled.Add(e.Exception); e.Handled = true; };
@@ -100,6 +110,8 @@ public class RecoveryBoundaryTests
                     Set(app, "recordingStream", new FileStream(unfinished, FileMode.Open, FileAccess.ReadWrite, FileShare.Read));
                     Set(app, "recordingPath", unfinished); Set(app, "hasFirstFrame", true);
                     Set(app, "recordingEnvironment", new RecordingEnvironment(11, 26200, 1536, 864, 1.25));
+                    app.StopRecording(); app.StopRecording();
+                    Assert.True(app.IsSaving);
                     app.Dispatcher.BeginInvoke(() => typeof(App).GetMethod("CompleteRecording", Private)!.Invoke(app, new object?[] { unfinished, null }));
                     PumpUntil(() => !app.IsBusy, TimeSpan.FromSeconds(5));
                     Assert.False(app.IsBusy); app.StopRecording(); app.StopRecording();
@@ -156,12 +168,16 @@ public class RecoveryBoundaryTests
                 Assert.DoesNotContain(app.Windows.Cast<Window>().OfType<ToastWindow>(), window => Texts(window).Any(text => text is "Recording saved" or "Clipboard updated"));
                 Assert.Empty(Directory.GetFiles(directory, "*.tmp"));
                 Assert.Empty(unhandled);
+                if (logMode == "readonly") Assert.Equal("owned log seed\n", File.ReadAllText(App.LogPath));
+                if (logMode == "directory") Assert.Empty(Directory.GetFileSystemEntries(App.LogPath));
+                if (logMode == "writable") Assert.Contains("Native Stop returned", File.ReadAllText(App.LogPath));
             }
             catch (Exception ex) { failure = ex; }
             finally
             {
                 foreach (var window in app.Windows.Cast<Window>().ToArray()) window.Close();
                 app.Shutdown();
+                if (File.Exists(App.LogPath)) File.SetAttributes(App.LogPath, FileAttributes.Normal);
                 Directory.Delete(directory, true);
             }
         });
