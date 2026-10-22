@@ -8,6 +8,24 @@ public static class Mp4FastStart
 {
     private readonly record struct Box(long Offset, long Size, int Header, string Type);
 
+    // A file and even a native completion callback are not proof that the sink
+    // wrote its index. This is a container-finalization guard, not a decoder.
+    public static void RequireFinalizedContainer(string path)
+    {
+        using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var boxes = ReadBoxes(input, 0, input.Length).ToArray();
+        var indices = boxes.Where(b => b.Type == "moov").ToArray();
+        if (indices.Length != 1 || indices[0].Size <= indices[0].Header
+            || !boxes.Any(b => b.Type == "ftyp") || !boxes.Any(b => b.Type == "mdat" && b.Size > b.Header)
+            || boxes.Any(b => b.Type == "moof"))
+            throw new InvalidDataException("The video container was not finalized. Its MP4 index or media data is missing; the unfinished file has been kept.");
+        var index = indices[0];
+        var children = ReadBoxes(input, index.Offset + index.Header, index.Offset + index.Size).ToArray();
+        if (!children.Any(b => b.Type == "mvhd" && b.Size > b.Header)
+            || !children.Any(b => b.Type == "trak" && b.Size > b.Header))
+            throw new InvalidDataException("The video container has an incomplete MP4 index; the unfinished file has been kept.");
+    }
+
     public static void Apply(string path, IProgress<double>? progress = null)
     {
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
