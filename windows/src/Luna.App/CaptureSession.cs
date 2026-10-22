@@ -20,6 +20,7 @@ public partial class App
     private FileStream? recordingStream;
     private FloatingBar? bar;
     private readonly Stopwatch recordingTime = new();
+    private readonly Stopwatch nativeFinalizationTime = new();
     private DispatcherTimer? recordingTimer;
     private RecordingEnvironment recordingEnvironment;
     private string? recordingPath;
@@ -81,27 +82,10 @@ public partial class App
                 activeMicrophone = Settings.Microphone == "system_default" || microphone == null ? devices.FirstOrDefault(d => d.IsDefaultDevice)?.FriendlyName ?? "System Default" : microphone.FriendlyName;
             }
         }
-        var options = new RecorderOptions
-        {
-            SourceOptions = new SourceOptions { RecordingSources = new List<RecordingSourceBase> { source } },
-            OutputOptions = new OutputOptions { RecorderMode = RecorderMode.Video, OutputFrameSize = new ScreenSize(size.Width, size.Height) },
-            VideoEncoderOptions = new VideoEncoderOptions
-            {
-                Framerate = 30,
-                IsFixedFramerate = true,
-                Bitrate = Luna.Core.Encoding.BitrateCeiling(size),
-                Quality = 55,
-                // The hardware encoder failed or stalled finalization on the tested hybrid GPU.
-                // SRL recommends software encoding for this native encoder instability.
-                IsHardwareEncodingEnabled = false,
-                IsMp4FastStartEnabled = true,
-                Encoder = new H264VideoEncoder { EncoderProfile = H264Profile.High, BitrateMode = H264BitrateControlMode.UnconstrainedVBR }
-            },
-            AudioOptions = new AudioOptions { IsAudioEnabled = true, Channels = AudioChannels.Stereo, Bitrate = AudioBitrate.bitrate_128kbps, AudioSources = audio },
-            MouseOptions = new MouseOptions { IsMousePointerEnabled = true, IsMouseClicksDetected = target.Mode != CaptureMode.Window, MouseLeftClickDetectionColor = "#36A9E1", MouseRightClickDetectionColor = "#F59E0B", MouseClickDetectionDuration = 300 }
-        };
+        var options = CreateRecorderOptions(source, size, target.Mode, audio);
         targetWindow = target.Window;
         recorder = Recorder.CreateRecorder(options);
+        Log($"Recording starting: build={typeof(App).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false).OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion}; mode={target.Mode}; encoder=software; systemAudio={activeSystemAudio}; microphone={activeMicrophone != "Muted"}; path={recordingPath}");
         var current = recorder; hasFirstFrame = false;
         current.OnFrameRecorded += (_, _) =>
         {
@@ -114,12 +98,19 @@ public partial class App
         recorder.OnStatusChanged += (_, args) => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (recorder != current) return;
+            Log("Recorder status: " + args.Status);
             if (args.Status == RecorderStatus.Recording && hasFirstFrame && !finishing) recordingTime.Start(); else recordingTime.Stop();
             RecordingChanged?.Invoke(); UpdateBar(); RefreshTray();
         }));
-        recordingTime.Reset(); finishing = false;
+        recordingTime.Reset(); nativeFinalizationTime.Reset(); finishing = false;
         recordingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-        recordingTimer.Tick += (_, _) => { if (targetWindow != IntPtr.Zero && !Native.IsWindow(targetWindow)) StopRecording(); RecordingChanged?.Invoke(); bar?.UpdateTime(); RefreshTrayStatus(); };
+        recordingTimer.Tick += (_, _) =>
+        {
+            if (targetWindow != IntPtr.Zero && !Native.IsWindow(targetWindow)) StopRecording();
+            if (finishing && nativeFinalizationTime.Elapsed.TotalSeconds >= 10)
+                SavingStatus = $"Finalizing video ({nativeFinalizationTime.Elapsed:mm\\:ss}). Not saved yet; keep Luna open.";
+            RecordingChanged?.Invoke(); bar?.UpdateTime(); RefreshTrayStatus();
+        };
         recordingTimer.Start();
         try
         {
@@ -130,6 +121,25 @@ public partial class App
         catch (Exception ex) { CompleteRecording(recordingPath, ex.Message); }
         RecordingChanged?.Invoke(); UpdateBar(); RefreshTray();
     }
+    internal static RecorderOptions CreateRecorderOptions(RecordingSourceBase source, VideoSize size, CaptureMode mode, List<AudioSourceBase> audio) => new()
+    {
+        SourceOptions = new SourceOptions { RecordingSources = new List<RecordingSourceBase> { source } },
+        OutputOptions = new OutputOptions { RecorderMode = RecorderMode.Video, OutputFrameSize = new ScreenSize(size.Width, size.Height) },
+        VideoEncoderOptions = new VideoEncoderOptions
+        {
+            Framerate = 30,
+            IsFixedFramerate = true,
+            Bitrate = Luna.Core.Encoding.BitrateCeiling(size),
+            Quality = 55,
+            // Hardware encoding failed or stalled finalization on the tested hybrid GPU.
+            // Keep this shared option for all modes and audio combinations.
+            IsHardwareEncodingEnabled = false,
+            IsMp4FastStartEnabled = true,
+            Encoder = new H264VideoEncoder { EncoderProfile = H264Profile.High, BitrateMode = H264BitrateControlMode.UnconstrainedVBR }
+        },
+        AudioOptions = new AudioOptions { IsAudioEnabled = true, Channels = AudioChannels.Stereo, Bitrate = AudioBitrate.bitrate_128kbps, AudioSources = audio },
+        MouseOptions = new MouseOptions { IsMousePointerEnabled = true, IsMouseClicksDetected = mode != CaptureMode.Window, MouseLeftClickDetectionColor = "#36A9E1", MouseRightClickDetectionColor = "#F59E0B", MouseClickDetectionDuration = 300 }
+    };
     private bool MicrophoneBlocked()
     {
         const string key = @"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
@@ -144,8 +154,10 @@ public partial class App
     {
         if (recorder == null || finishing) return;
         finishing = true; SavingStatus = "Saving recording..."; recordingTime.Stop();
+        nativeFinalizationTime.Restart(); Log("Stop requested; waiting for native video finalization: " + recordingPath);
         RecordingChanged?.Invoke(); UpdateBar(); RefreshTray();
         recorder.Stop();
+        Log("Native Stop returned; waiting for finalized video: " + recordingPath);
     }
     internal void PauseRecording()
     {
@@ -156,6 +168,8 @@ public partial class App
     private async void CompleteRecording(string? path, string? error)
     {
         if (recorder == null) return;
+        nativeFinalizationTime.Stop();
+        Log($"Native recording ended after {nativeFinalizationTime.Elapsed.TotalSeconds:F3}s finalizing; error={error ?? "none"}; path={path ?? recordingPath}");
         recordingTimer?.Stop(); recordingTimer = null; recordingTime.Stop(); targetWindow = IntPtr.Zero;
         var stream = recordingStream; var ownedOutput = stream != null;
         var old = recorder; recorder = null; recordingStream = null; finishing = true;
@@ -165,7 +179,7 @@ public partial class App
         RecordingChanged?.Invoke(); UpdateBar(); RefreshTray();
         try
         {
-            await Task.Run(() => { try { old.Dispose(); } finally { stream?.Dispose(); } });
+            await Task.Run(() => { try { old.Dispose(); stream?.Flush(true); } finally { stream?.Dispose(); } });
             if (path == null || !File.Exists(path) || new FileInfo(path).Length == 0 || !recordedFrame)
             {
                 var reason = error ?? "Stopped before any video was recorded. Try a longer recording.";
@@ -179,6 +193,9 @@ public partial class App
             else
             {
                 var saved = path;
+                // Do not turn a missing moov (or empty index) into an optional
+                // faststart warning and then claim that an unusable take saved.
+                await Task.Run(() => Mp4FastStart.RequireFinalizedContainer(saved));
                 var progress = new Progress<double>(value =>
                 {
                     if (!finishing) return;
@@ -187,7 +204,7 @@ public partial class App
                 });
                 string? warning = null;
                 try { await Task.Run(() => Mp4FastStart.Apply(saved, progress)); }
-                catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or OverflowException)
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     Log(ex.ToString()); warning = "MP4 index optimization failed; original video kept. Faststart is not guaranteed.";
                 }
@@ -201,7 +218,8 @@ public partial class App
                     try { await ClipboardService.Text(prompt); copied = true; }
                     catch (System.Runtime.InteropServices.ExternalException ex) { Log(ex.ToString()); warning = (warning == null ? "" : warning + " ") + "Clipboard is busy. Copy again from Library."; }
                 }
-                new ToastWindow(copied ? "Clipboard updated" : "Recording saved", copied ? "Path and context copied (Ctrl+V)" : "Saved to your library", () => OpenLibrary(saved)).Show();
+                Log("Video finalized: " + saved + "; context=" + (prompt != null));
+                new ToastWindow(copied ? "Clipboard updated" : prompt != null ? "Recording saved" : "Video saved; context failed", copied ? "Path and context copied (Ctrl+V)" : prompt != null ? "Saved to your library" : "Video kept in Library; context is incomplete", () => OpenLibrary(saved)).Show();
                 if (warning != null) ShowNotice(warning);
                 if (error != null) ShowNotice("Recording ended: " + error + ". Saved what was recorded.");
                 if (Settings.AutoDelete) await Task.Run(() => CleanUp());

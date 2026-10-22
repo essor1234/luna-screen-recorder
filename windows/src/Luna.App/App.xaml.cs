@@ -182,9 +182,10 @@ public partial class App : Application
         window.Show();
     }
     internal void ShowNotice(string text) { Log(text); new ToastWindow(text).Show(); }
+    internal static string LogPath { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Luna", "luna.log");
     internal static void Log(string text)
     {
-        try { var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Luna", "luna.log"); Directory.CreateDirectory(Path.GetDirectoryName(path)!); if (File.Exists(path) && new FileInfo(path).Length > 5 * 1024 * 1024) File.WriteAllText(path, ""); File.AppendAllText(path, DateTimeOffset.Now + " " + text + Environment.NewLine); } catch (IOException) { }
+        try { var path = LogPath; Directory.CreateDirectory(Path.GetDirectoryName(path)!); if (File.Exists(path) && new FileInfo(path).Length > 5 * 1024 * 1024) File.WriteAllText(path, ""); File.AppendAllText(path, DateTimeOffset.Now + " " + text + Environment.NewLine); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
     protected override void OnExit(ExitEventArgs e)
     {

@@ -161,10 +161,33 @@ public static class Prompt
     public static string Write(string mp4, RecordingEnvironment environment)
     {
         if (!Valid(environment)) throw new ArgumentException("Recording environment is incomplete.", nameof(environment));
-        File.WriteAllText(RecordingFiles.MetadataPath(mp4), JsonSerializer.Serialize(environment));
+        WriteDurable(RecordingFiles.MetadataPath(mp4), JsonSerializer.Serialize(environment));
         var text = Create(mp4, environment);
-        File.WriteAllText(Path.ChangeExtension(mp4, ".prompt.md"), text);
+        WriteDurable(Path.ChangeExtension(mp4, ".prompt.md"), text);
         return text;
+    }
+    internal static void WriteDurable(string path, string text, Func<string, FileStream>? open = null)
+    {
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var created = false;
+        try
+        {
+            using (var stream = open != null ? open(temporary) : new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                created = true;
+                using var writer = new StreamWriter(stream);
+                writer.Write(text); writer.Flush(); stream.Flush(true);
+            }
+            File.Move(temporary, path, true);
+        }
+        finally
+        {
+            if (created)
+            {
+                try { File.Delete(temporary); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+        }
     }
     public static string LoadOrRegenerate(string mp4)
     {

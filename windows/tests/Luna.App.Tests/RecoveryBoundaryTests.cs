@@ -21,15 +21,18 @@ public class RecoveryBoundaryTests
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
-    [Fact]
-    public async Task MetadataRefusalsAndOptimizerRefusalStayInsideApplicationRecovery()
+    [Theory]
+    [InlineData("writable")]
+    [InlineData("directory")]
+    [InlineData("readonly")]
+    public async Task MetadataRefusalsAndOptimizerRefusalStayInsideApplicationRecovery(string logMode)
     {
         // WPF permits one Application per process; its shutdown must not affect other tests.
         var assembly = typeof(RecoveryBoundaryTests).Assembly.Location;
         var host = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH")
             ?? Path.GetFullPath(Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "../../..", "dotnet.exe"));
         var start = new ProcessStartInfo(host) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var argument in new[] { "exec", "--runtimeconfig", Path.ChangeExtension(assembly, ".runtimeconfig.json"), assembly, "--recovery-boundaries" }) start.ArgumentList.Add(argument);
+        foreach (var argument in new[] { "exec", "--runtimeconfig", Path.ChangeExtension(assembly, ".runtimeconfig.json"), assembly, "--recovery-boundaries", logMode }) start.ArgumentList.Add(argument);
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEndAsync(); var errors = process.StandardError.ReadToEndAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -40,18 +43,25 @@ public class RecoveryBoundaryTests
 
     public static int Main(string[] args)
     {
-        if (args.Length != 1 || args[0] != "--recovery-boundaries") { Console.Error.WriteLine("Use --recovery-boundaries for the owned native test fixture."); return 2; }
-        try { ExerciseRecoveryBoundaries(); Console.WriteLine("Application recovery boundaries passed."); return 0; }
+        if (args.Length != 2 || args[0] != "--recovery-boundaries") { Console.Error.WriteLine("Use --recovery-boundaries for the owned native test fixture."); return 2; }
+        try { ExerciseRecoveryBoundaries(args[1]); Console.WriteLine("Application recovery boundaries passed."); return 0; }
         catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
     }
 
-    private static void ExerciseRecoveryBoundaries()
+    private static void ExerciseRecoveryBoundaries(string logMode)
     {
         Exception? failure = null;
         var thread = new Thread(() =>
         {
             var directory = Path.Combine(Path.GetTempPath(), "Luna.App.Tests", Guid.NewGuid().ToString());
             Directory.CreateDirectory(directory);
+            App.LogPath = Path.Combine(directory, "luna.log");
+            if (logMode == "directory") Directory.CreateDirectory(App.LogPath);
+            else
+            {
+                File.WriteAllText(App.LogPath, "owned log seed\n");
+                if (logMode == "readonly") File.SetAttributes(App.LogPath, FileAttributes.ReadOnly);
+            }
             var app = new IsolatedApp { ShutdownMode = ShutdownMode.OnExplicitShutdown };
             var unhandled = new List<Exception>();
             app.DispatcherUnhandledException += (_, e) => { unhandled.Add(e.Exception); e.Handled = true; };
@@ -89,12 +99,40 @@ public class RecoveryBoundaryTests
                     finally { library.Close(); }
                 }
 
-                // A deliberately unsupported container triggers the actual optimizer refusal.
-                // This fixture verifies delivery recovery, not playable-video acceptance.
+                // A native callback plus recorded frames must not manufacture success
+                // for the same missing-index boundary as a frozen real Stop.
+                foreach (var emptyIndex in new[] { false, true })
+                {
+                    var unfinished = Path.Combine(directory, "Recording_unfinished_" + emptyIndex + ".mp4");
+                    byte[] unfinishedBytes = [.. Box("ftyp", []), .. Box("mdat", [1, 2, 3]), .. (emptyIndex ? Box("moov", []) : Array.Empty<byte>())];
+                    File.WriteAllBytes(unfinished, unfinishedBytes);
+                    Set(app, "recorder", Recorder.CreateRecorder(new RecorderOptions { AudioOptions = new AudioOptions { IsAudioEnabled = false } }));
+                    Set(app, "recordingStream", new FileStream(unfinished, FileMode.Open, FileAccess.ReadWrite, FileShare.Read));
+                    Set(app, "recordingPath", unfinished); Set(app, "hasFirstFrame", true);
+                    Set(app, "recordingEnvironment", new RecordingEnvironment(11, 26200, 1536, 864, 1.25));
+                    app.StopRecording(); app.StopRecording();
+                    Assert.True(app.IsSaving);
+                    app.Dispatcher.BeginInvoke(() => typeof(App).GetMethod("CompleteRecording", Private)!.Invoke(app, new object?[] { unfinished, null }));
+                    PumpUntil(() => !app.IsBusy, TimeSpan.FromSeconds(5));
+                    Assert.False(app.IsBusy); app.StopRecording(); app.StopRecording();
+                    Assert.Equal(unfinishedBytes, File.ReadAllBytes(unfinished));
+                    Assert.False(File.Exists(Path.ChangeExtension(unfinished, ".prompt.md")));
+                    Assert.False(File.Exists(RecordingFiles.MetadataPath(unfinished)));
+                    Assert.Contains(app.Windows.Cast<Window>().OfType<ToastWindow>(), window => Texts(window).Any(text => text.StartsWith("Recording finalization failed.")));
+                    Assert.DoesNotContain(app.Windows.Cast<Window>().OfType<ToastWindow>(), window => Texts(window).Any(text => text is "Recording saved" or "Clipboard updated"));
+                }
+
+                // Denying replacement after an indexed container was written is an
+                // optional optimization failure, unlike an unfinished/invalid container.
+                // This structural fixture tests I/O recovery, not decoder acceptance.
                 var saved = Path.Combine(directory, "Recording_optimizer.mp4");
-                byte[] original = [.. Box("ftyp", []), .. Box("mdat", [1]), .. Box("moov", []), .. Box("moof", [])];
+                var table = new byte[12]; BinaryPrimitives.WriteUInt32BigEndian(table.AsSpan(4), 1); BinaryPrimitives.WriteUInt32BigEndian(table.AsSpan(8), 16);
+                var track = Box("trak", Box("mdia", Box("minf", Box("stbl", Box("stco", table)))));
+                byte[] original = [.. Box("ftyp", []), .. Box("mdat", [1]), .. Box("moov", [.. Box("mvhd", [0]), .. track])];
                 File.WriteAllBytes(saved, original);
-                Assert.Throws<InvalidDataException>(() => Mp4FastStart.Apply(saved));
+                using var replacementLock = new FileStream(saved, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                var refused = Record.Exception(() => Mp4FastStart.Apply(saved));
+                Assert.True(refused is IOException or UnauthorizedAccessException, refused?.ToString());
                 var recorder = Recorder.CreateRecorder(new RecorderOptions
                 {
                     AudioOptions = new AudioOptions { IsAudioEnabled = false },
@@ -112,14 +150,34 @@ public class RecoveryBoundaryTests
                 Assert.True(File.Exists(Path.ChangeExtension(saved, ".prompt.md")));
                 Assert.Equal(Prompt.Create(saved, new RecordingEnvironment(11, 26200, 1536, 864, 1.25)), File.ReadAllText(Path.ChangeExtension(saved, ".prompt.md")));
                 Assert.Contains(app.Windows.Cast<Window>().OfType<ToastWindow>(), window => Texts(window).Any(text => text.StartsWith("MP4 index optimization failed; original video kept.")));
+
+                foreach (var toast in app.Windows.Cast<Window>().OfType<ToastWindow>().ToArray()) toast.Close();
+                var contextFailure = Path.Combine(directory, "Recording_context_failure.mp4");
+                File.WriteAllBytes(contextFailure, original);
+                using var contextReplacementLock = new FileStream(contextFailure, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                Directory.CreateDirectory(Path.ChangeExtension(contextFailure, ".prompt.md"));
+                Set(app, "recorder", Recorder.CreateRecorder(new RecorderOptions { AudioOptions = new AudioOptions { IsAudioEnabled = false } }));
+                Set(app, "recordingStream", new FileStream(contextFailure, FileMode.Open, FileAccess.ReadWrite, FileShare.Read));
+                Set(app, "recordingPath", contextFailure); Set(app, "hasFirstFrame", true);
+                app.Dispatcher.BeginInvoke(() => typeof(App).GetMethod("CompleteRecording", Private)!.Invoke(app, new object?[] { contextFailure, null }));
+                PumpUntil(() => !app.IsBusy, TimeSpan.FromSeconds(5));
+                Assert.False(app.IsBusy);
+                Assert.Equal(original, File.ReadAllBytes(contextFailure));
+                Assert.True(File.Exists(RecordingFiles.MetadataPath(contextFailure)));
+                Assert.Contains(app.Windows.Cast<Window>().OfType<ToastWindow>(), window => Texts(window).Contains("Video saved; context failed"));
+                Assert.DoesNotContain(app.Windows.Cast<Window>().OfType<ToastWindow>(), window => Texts(window).Any(text => text is "Recording saved" or "Clipboard updated"));
                 Assert.Empty(Directory.GetFiles(directory, "*.tmp"));
                 Assert.Empty(unhandled);
+                if (logMode == "readonly") Assert.Equal("owned log seed\n", File.ReadAllText(App.LogPath));
+                if (logMode == "directory") Assert.Empty(Directory.GetFileSystemEntries(App.LogPath));
+                if (logMode == "writable") Assert.Contains("Native Stop returned", File.ReadAllText(App.LogPath));
             }
             catch (Exception ex) { failure = ex; }
             finally
             {
                 foreach (var window in app.Windows.Cast<Window>().ToArray()) window.Close();
                 app.Shutdown();
+                if (File.Exists(App.LogPath)) File.SetAttributes(App.LogPath, FileAttributes.Normal);
                 Directory.Delete(directory, true);
             }
         });
